@@ -10,7 +10,7 @@ import argparse
 from datetime import datetime
 
 from utils import GraphDataset
-from models import GraphNeuralNetwork, GraphNeuralNetwork2, train, test
+from models import GraphNeuralNetwork, GraphNeuralNetwork2, GraphNeuralNetworkDGL, GraphNeuralNetworkDrop, train, test
 
 
 
@@ -36,9 +36,9 @@ if __name__ == "__main__":
     torch.manual_seed(2)
     np.random.seed(2)
 
-    args = parse_args() # getting all the inti args from input
+    args = parse_args() # getting all the init args from input
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda:1" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
     
     dirc = "/ubc/ece/home/ll/grads/idanroth/Projects/gnn_psn_calib/"
@@ -47,22 +47,26 @@ if __name__ == "__main__":
     model_dict = torch.load(modelpath)
 
     data_filename = args.data_filename  
-    test_data = torch.load(datapath + "/test_dataset2")
+    test_data = torch.load(datapath + "/test_dataset")
 
     # hyper-parameters
-    # batch_size = model_dict['batch_size']
-    # # weight_decay = 0
-    # # dropout = 0 
-    # d_h = model_dict['h_dim']
-    # n_layer = model_dict['mlp_layer']
-    # d_in = d_out = 2*model_dict['num_rf']
-    batch_size = 512
-    d_h = 64
-    n_layer = 1
-    d_in = d_out = 2*2
+    batch_size = model_dict['batch_size']
+    # weight_decay = 0
+    # dropout = 0 
+    d_h = model_dict['h_dim']
+    n_layer = model_dict['mlp_layer']
+    d_in = 2*model_dict['num_meas']*model_dict['num_rfchain']
+    d_out = 2*model_dict['num_rfchain']
+    dropout = 0.1
+    # batch_size = 512
+    # d_h = 256
+    # n_layer = 2
+    # d_in = d_out = 2*2
 
     test_dataloader = GraphDataLoader(test_data, batch_size=batch_size, shuffle=False)
-    model = GraphNeuralNetwork2(d_in, d_h, d_out, n_layer, activation_fn=nn.ReLU()).to(device)
+    
+    # model = GraphNeuralNetwork2(d_in, d_h, d_out, n_layer, activation_fn=nn.ReLU()).to(device)
+    model = GraphNeuralNetworkDrop(d_in, d_h, d_out, n_layer, activation_fn=nn.ReLU(), dropout=dropout).to(device)
 
     model.load_state_dict(model_dict['model_state_dict'])
 

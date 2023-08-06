@@ -7,7 +7,7 @@ import time
 import wandb
 import numpy as np
 from cmath import inf
-from utils import save_model, rmse
+from utils import save_model, rmse, deviation_loss
 # from torch.nn import init
 # import torch.nn.functional as F
 from dgl import function as fn
@@ -45,16 +45,30 @@ class GraphNeuralNetwork(nn.Module):
 
 class InitLayer(nn.Module):
 
-    def __init__(self, in_feats, h_feats, activation=None, embed_in=True):
+    def __init__(self, in_feats, h_feats, out_feats, activation=None, embed_in=True):
         super(InitLayer, self).__init__()
         
         self.in_feats = in_feats
         self.h_feats = h_feats
+        self.out_feats = out_feats
         self.activation = activation
         self.embed_input = embed_in
 
-        self.linear_ue = nn.Linear(in_feats, h_feats) # alternitevly, can be a pre-defined DNN
-        self.linear_t = nn.Linear(h_feats, h_feats) # alternitevly, can be a pre-defined DNN
+        # self.linear_ue = nn.Linear(in_feats, h_feats) # alternitevly, can be a pre-defined DNN
+        # self.linear_t = nn.Linear(h_feats, h_feats) # alternitevly, can be a pre-defined DNN
+        self.mlp_ue = nn.Sequential(nn.Linear(in_feats, h_feats),
+                                    nn.BatchNorm1d(h_feats),
+                                    activation,
+                                    nn.Linear(h_feats, out_feats),
+                                    nn.BatchNorm1d(out_feats),
+                                    activation)
+        
+        self.mlp_t = nn.Sequential(nn.Linear(out_feats, h_feats),
+                                   nn.BatchNorm1d(h_feats),
+                                   activation,
+                                   nn.Linear(h_feats, out_feats),
+                                   nn.BatchNorm1d(out_feats),
+                                   activation)
 
 
     def forward(self, graph):
@@ -63,36 +77,41 @@ class InitLayer(nn.Module):
             num_ue = graph.num_nodes('user')//graph.batch_size
             num_t = graph.num_nodes('antenna')//graph.batch_size
 
+            feat_dict = graph.ndata['feat'] # Get users node features --> shape: batch*N_ue X in_feats (2*N*N_rf)
+
             if self.embed_input: # Embed pilots to intial node features
-                feat_dict = graph.ndata['feat'] # Get users node features --> shape: batch*N_ue X in_feats (2*num_rf)
                 # Embed user node feats  --> shape: batch*N_ue X h_feats
-                feat_dict['user'] = self.linear_ue(feat_dict['user'])
+                feat_dict['user'] = self.mlp_ue(feat_dict['user'])
                 
-                if self.activation is not None: 
-                    feat_dict['user'] = self.activation(feat_dict['user'])
+                # if self.activation is not None: 
+                #     feat_dict['user'] = self.activation(feat_dict['user'])
 
                 # Element-wise mean for all features in every batch --> shape: batch X h_feats
-                antenna_nodes = feat_dict['user'].view(graph.batch_size, num_ue, -1).mean(dim=1) 
+                # antenna_nodes = feat_dict['user'].view(graph.batch_size, num_ue, -1).mean(dim=1) 
                 # antenna_nodes = 0.5 * torch.ones(antenna_nodes.shape).to(torch.cuda.current_device())
+                torch.manual_seed(2)
+                antenna_nodes = torch.randn(graph.num_nodes('antenna'), self.out_feats).to(torch.cuda.current_device()) #shape: batch*N_t X out_feats
 
                 # Embed antenna node feats  --> shape: batch X h_feats
-                antenna_nodes = self.linear_t(antenna_nodes)
-                if self.activation is not None:
-                    antenna_nodes = self.activation(antenna_nodes)
-                # print(antenna_nodes[:2])
+                # antenna_nodes = self.linear_t(antenna_nodes)
+                feat_dict['antenna'] = self.mlp_t(antenna_nodes)
+                # feat_dict['antenna'] = antenna_nodes
+
+                # if self.activation is not None:
+                #     antenna_nodes = self.activation(antenna_nodes)
+        
 
                 # Repeat feature - every antenna node get the same feature yet differs between graphs --> shape: batch*N_t X h_feats
-                feat_dict['antenna'] = torch.repeat_interleave(antenna_nodes, num_t, dim=0)
-                feat_dict['antenna'] += torch.randn(feat_dict['antenna'].shape).to(torch.cuda.current_device()) # Add noise to make antenna node features distinct
+                # feat_dict['antenna'] = torch.repeat_interleave(antenna_nodes, num_t, dim=0)
+                # feat_dict['antenna'] += torch.randn(feat_dict['antenna'].shape).to(torch.cuda.current_device()) # Add noise to make antenna node features distinct
 
        
-            
-            else: # Use pilots directly as intialization for node feats
-                feat_dict = graph.ndata['feat'] # Get users node features --> shape: batch*N_ue X in_feats
-                # Element-wise mean for all features in every batch --> shape: batch X in_feats
-                antenna_nodes = feat_dict['user'].view(graph.batch_size, num_ue, -1).mean(dim=1) 
-                # Repeat feature - every antenna node get the same feature yet differs between graphs --> shape: batch*N_t X in_feats
-                feat_dict['antenna'] = torch.repeat_interleave(antenna_nodes, num_t, dim=0)
+            # else: # Use pilots directly as intialization for node feats
+            #     feat_dict = graph.ndata['feat'] # Get users node features --> shape: batch*N_ue X in_feats
+            #     # Element-wise mean for all features in every batch --> shape: batch X in_feats
+            #     antenna_nodes = feat_dict['user'].view(graph.batch_size, num_ue, -1).mean(dim=1) 
+            #     # Repeat feature - every antenna node get the same feature yet differs between graphs --> shape: batch*N_t X in_feats
+            #     feat_dict['antenna'] = torch.repeat_interleave(antenna_nodes, num_t, dim=0)
 
             return feat_dict
         
@@ -260,7 +279,7 @@ class MLP(nn.Module):
 
 class GraphConv2(nn.Module):
 
-    def __init__(self, feat_dim, aggregation_type, n_layer, activation=nn.ReLU()):
+    def __init__(self, feat_dim, aggregation_type, n_layer, activation=nn.ReLU(), dropout=0):
         super(GraphConv2, self).__init__()
         
         self.feat_dim = feat_dim
@@ -268,14 +287,14 @@ class GraphConv2(nn.Module):
         self.aggrgate_fn = self.get_aggregate_fn(aggregation_type)
         self.activation = activation
 
-        self.mlp_aggr = MLP(feat_dim, activation, n_layer)
-        self.mlp_self = MLP(feat_dim, activation, n_layer)
+        self.mlp_aggr = MLP2(feat_dim, feat_dim, activation, n_layer, dropout)
+        self.mlp_self = MLP2(feat_dim, feat_dim, activation, n_layer, dropout)
         # self.lin_aggr = nn.Linear(in_feats, out_feats) # alternitevly, can be a pre-defined DNN
         # self.lin_self = nn.Linear(in_feats, out_feats) # alternitevly, can be a pre-defined DNN
 
         # An optional MLP mapping which operates over the mapping of the previous hidden state 
         # of the current updated node and the aggregated information added together
-        self.mlp_comb = MLP(feat_dim, activation, n_layer)
+        self.mlp_comb = MLP2(feat_dim, feat_dim, activation, n_layer, dropout)
         # self.lin_comb = nn.Linear(out_feats, out_feats) 
 
         
@@ -326,97 +345,266 @@ class GraphConv2(nn.Module):
             return out
 
 
+##################################################################################
+
+class GraphNeuralNetworkConcat(nn.Module):
+    """ 
+    n_layer: number of layers of MLP
+    """
+    def __init__(self, in_feats, h_feats, out_feats, n_layer, activation_fn, dropout):
+        super(GraphNeuralNetworkConcat, self).__init__()
+        
+        self.init_layer = InitLayer(in_feats, 2*h_feats, h_feats, activation_fn) ### should not be with g.local scope if we updte node features and use them
+        self.conv1 = dglnn.HeteroGraphConv({
+                    'channel2a' : GraphConvConcat(feat_dim=h_feats, aggregation_type='mean', n_layer=n_layer, activation=activation_fn, dropout=dropout),
+                    'channel2u' : GraphConvConcat(feat_dim=h_feats, aggregation_type='mean', n_layer=n_layer, activation=activation_fn, dropout=dropout)},
+                    aggregate='sum') # aggregates the "final" hidden states of the dst node which connects to several src node types into a real final hidden state 
+                                     # have other buit-in options such as max etc. SINCE we use bipartite graph, it is not reallt relevant
+        self.conv2 = dglnn.HeteroGraphConv({
+                    'channel2a' : GraphConvConcat(feat_dim=h_feats, aggregation_type='mean', n_layer=n_layer, activation=activation_fn, dropout=dropout),
+                    'channel2u' : GraphConvConcat(feat_dim=h_feats, aggregation_type='mean', n_layer=n_layer, activation=activation_fn, dropout=dropout)},
+                    aggregate='sum') # aggregates the "final" hidden states of the dst node which connects to several src node types into a real final hidden state 
+                                     # have other buit-in options such as max etc. SINCE we use bipartite graph, it is not reallt relevant
+        self.normalization_layer = NormLayer(h_feats, out_feats)
+
+    
+    def forward(self, g):
+        # Initial feats embedding for users and antenna nodes to get the feat dict - h 
+        h = self.init_layer(g)
+        # GCN layers
+        h = self.conv1(g, h)
+        # print(h['antenna'][:2])
+        h = self.conv2(g, h)
+        # Processing antenna embeddings to get PSN deviations (further node-level anaylsis + deal with constraints)
+        out = self.normalization_layer(g, h['antenna'])
+        return out
+
+
+class GraphConvConcat(nn.Module):
+
+    def __init__(self, feat_dim, aggregation_type, n_layer, activation=nn.ReLU(), dropout=0):
+        super(GraphConvConcat, self).__init__()
+        
+        self.feat_dim = feat_dim
+        self.n_layer = n_layer
+        self.aggrgate_fn = self.get_aggregate_fn(aggregation_type)
+        self.activation = activation
+
+        self.mlp_aggr = MLP2(feat_dim, feat_dim, activation, n_layer, dropout)
+        self.mlp_self = MLP2(feat_dim, feat_dim, activation, n_layer, dropout)
+        # self.lin_aggr = nn.Linear(in_feats, out_feats) # alternitevly, can be a pre-defined DNN
+        # self.lin_self = nn.Linear(in_feats, out_feats) # alternitevly, can be a pre-defined DNN
+
+        # An optional MLP mapping which operates over the mapping of the previous hidden state 
+        # of the current updated node and the aggregated information added together
+        self.mlp_comb = MLP2(2*feat_dim, feat_dim, activation, n_layer, dropout)
+        # self.lin_comb = nn.Linear(out_feats, out_feats) 
+
+        
+    def get_aggregate_fn(self, aggregator_type):
+    # aggregator type: mean, sum, max, min
+        if aggregator_type not in ['mean', 'sum', 'max', "min"]:
+            raise KeyError(f'Aggregator type {aggregator_type} not supported.\
+                             Use "mean", "sum", "max", or "min" only')
+        elif aggregator_type == 'mean':
+            aggregate_fn = fn.mean(msg="m", out="h")
+        elif aggregator_type == 'sum':
+            aggregate_fn = fn.sum(msg="m", out="h")
+        elif aggregator_type == 'max':
+            aggregate_fn = fn.max(msg="m", out="h")
+        elif aggregator_type == 'min':
+            aggregate_fn = fn.min(msg="m", out="h") 
+
+        return aggregate_fn   
+        
+
+    def forward(self, graph, feat, edge_weight=None):
+       
+        with graph.local_scope():
+
+            # if edge_weight is not None:
+            #     assert edge_weight.shape[0] == graph.num_edges()
+            #     graph.edata["_edge_weight"] = edge_weight
+            #     aggregate_fn = fn.u_mul_e("h", "_edge_weight", "m")
+
+            # devide to the src nodes hidden states and the dst nodes hidden states (srcdata, dstdata tensors)
+            feat_src, feat_dst = expand_as_pair(feat, graph) ##### make sure that this really give the updated features of srcdata and dstdata ##########
+            # maybe can just use: feat_src, feat_dst = graph.srcdata["h"], graph.dstdata["h"] if updating them at the end?????
+
+            message_fn = fn.copy_u("h", "m")
+            aggregate_fn = self.aggrgate_fn # aggregates src neghibors "m" into dst "h"
+
+            
+            # Aggregation stage
+            graph.srcdata["h"] = self.mlp_aggr(feat_src)
+            graph.update_all(message_fn, aggregate_fn) # The following update takes srcdata["h"], compute the aggregate message on the correspoindg edge "m",
+                                                       # and update the corresponding dst nodes hidden states at dstdata["h"]
+            aggr_message = graph.dstdata["h"]
+
+            # Combination stage
+            out = self.mlp_comb(torch.concat((self.mlp_self(feat_dst), aggr_message), dim=1))
+            # out = self.activation(out)
+
+            return out
+
+
+class MLP2(nn.Module):
+    def __init__(self, in_feats, out_feats, activation, n_layer, dropout):
+        super(MLP2, self).__init__()
+        self.linear_list = nn.ModuleList()
+        if in_feats != out_feats:
+            self.linear_list.append(nn.Sequential(nn.Linear(in_feats, out_feats),
+                                                  nn.BatchNorm1d(out_feats),
+                                                  activation,
+                                                  nn.Dropout(dropout)))
+            n_layer -= 1
+        for i in range(n_layer):
+            self.linear_list.append(nn.Sequential(nn.Linear(out_feats, out_feats),
+                                                  nn.BatchNorm1d(out_feats),
+                                                  activation,
+                                                  nn.Dropout(dropout)))
+        # self.activation = activation
+        
+
+    def forward(self,x):
+        for i in range(len(self.linear_list)):
+            x = self.linear_list[i](x)
+            # x = self.activation(x)
+
+        return x
 
 
 
-def train(dataloader, validloader, model, loss_fn, optimizer, device, num_epochs, config, filename):
-    wandb.init(name= f"gnn1_{datetime.now().strftime('%d-%m-%Y @ %H:%M')}_dh_{config['h_dim']}_mlp-layer_{config['mlp_layer']}_batch_{config['batch_size']}_lr_{config['lr']}", project="gnn_psn_calib", config=config)
+
+
+class GraphNeuralNetworkConcat2(nn.Module):
+    """ 
+    n_layer: number of layers of MLP
+    """
+    def __init__(self, in_feats, h_feats, out_feats, n_layer, activation_fn, dropout):
+        super(GraphNeuralNetworkConcat2, self).__init__()
+        
+        self.init_layer = InitLayer2(in_feats, 2*h_feats, h_feats, activation_fn) ### should not be with g.local scope if we updte node features and use them
+        self.conv1 = dglnn.HeteroGraphConv({
+                    'channel2a' : GraphConvConcat(feat_dim=h_feats, aggregation_type='mean', n_layer=n_layer, activation=activation_fn, dropout=dropout),
+                    'channel2u' : GraphConvConcat(feat_dim=h_feats, aggregation_type='mean', n_layer=n_layer, activation=activation_fn, dropout=dropout)},
+                    aggregate='sum') # aggregates the "final" hidden states of the dst node which connects to several src node types into a real final hidden state 
+                                     # have other buit-in options such as max etc. SINCE we use bipartite graph, it is not reallt relevant
+        self.conv2 = dglnn.HeteroGraphConv({
+                    'channel2a' : GraphConvConcat(feat_dim=h_feats, aggregation_type='mean', n_layer=n_layer, activation=activation_fn, dropout=dropout),
+                    'channel2u' : GraphConvConcat(feat_dim=h_feats, aggregation_type='mean', n_layer=n_layer, activation=activation_fn, dropout=dropout)},
+                    aggregate='sum') # aggregates the "final" hidden states of the dst node which connects to several src node types into a real final hidden state 
+                                     # have other buit-in options such as max etc. SINCE we use bipartite graph, it is not reallt relevant
+        self.normalization_layer = NormLayer(h_feats, out_feats)
+
+    
+    def forward(self, g):
+        # Initial feats embedding for users and antenna nodes to get the feat dict - h 
+        h = self.init_layer(g)
+        
+        # GCN layers
+        h = self.conv1(g, h)
+        # print(h['antenna'][:2])
+        h = self.conv2(g, h)
+        # h = F.relu(h)
+        # Processing antenna embeddings to get PSN deviations (further node-level anaylsis + deal with constraints)
+        out = self.normalization_layer(g, h['antenna'])
+        return out
+
+
+class InitLayer2(nn.Module):
+
+    def __init__(self, in_feats, h_feats, out_feats, activation=None, embed_in=True):
+        super(InitLayer2, self).__init__()
+        
+        self.in_feats = in_feats
+        self.h_feats = h_feats
+        self.out_feats = out_feats
+        self.activation = activation
+        self.embed_input = embed_in
+
+        self.mlp_ue = nn.Sequential(nn.Linear(in_feats, h_feats),
+                                    nn.BatchNorm1d(h_feats),
+                                    activation,
+                                    nn.Linear(h_feats, out_feats),
+                                    nn.BatchNorm1d(out_feats),
+                                    activation)
+        
+        self.mlp_t = nn.Sequential(nn.Linear(in_feats, h_feats),
+                                   nn.BatchNorm1d(h_feats),
+                                   activation,
+                                   nn.Linear(h_feats, out_feats),
+                                   nn.BatchNorm1d(out_feats),
+                                   activation)
+
+
+    def forward(self, graph):
+       
+        with graph.local_scope(): # should we do it, or should we update g.ndata['feat] = feat_dict????
+            num_ue = graph.num_nodes('user')//graph.batch_size
+            num_t = graph.num_nodes('antenna')//graph.batch_size
+
+            feat_dict = graph.ndata['feat'] # Get node features --> shape: batch*N_ue X in_feats (2*N*Nrf)
+
+            if self.embed_input: # Embed pilots to intial node features
+                # Embed user node feats  --> shape: batch*N_ue X h_feats
+                feat_dict['user'] = self.mlp_ue(feat_dict['user'])
+                feat_dict['antenna'] = self.mlp_t(feat_dict['antenna'])
+
+
+            return feat_dict
+
+
+
+
+def train(dataloader, validloader, model, optimizer, device, num_epochs, config, filename, mode):
+    wandb.init(name=filename, project="gnn_psn_calib", config=config, mode=mode)
     wandb.watch(model)
     best_loss = inf
-    # total_step = len(dataloader)
     batch_size = dataloader.batch_size
     model.train()
     start_time = time.time() 
     for epoch in range(num_epochs):
-        for i, (g, pilots, combiner, channel, _) in enumerate(dataloader):  
+        cumu_loss = 0
+        for i, (g, pilots, combiner, channel, psn_dev) in enumerate(dataloader):  
             # Features shape - x: torch.Size([batch_size, 181]), y: torch.Size([batch_size, 7])  
             # Each i is a batch of batch_size smaples
-            g, pilots, combiner, channel = g.to(device), pilots.to(device), combiner.to(device), channel.to(device)
-            # feat_dict = g.ndata['feat'] # includes only user node features
-
-            # user_feats = g.nodes['user'].data['feat']
-            # antenna_feats = g.nodes['antenna'].data['feat']
-            # feat_dict = {'antenna': antenna_feats, 'user': user_feats}
-            
-            # Forward pass
-            # pred = model(g, feat_dict)['antenna'] # get antenna elements node features
-            # pred = model(g)['antenna']
-
+            g, pilots, combiner, channel, psn_dev = g.to(device), pilots.to(device), combiner.to(device), channel.to(device), psn_dev.to(device)
             
             # Predict the PSN deviation matrices - W
             pred = model(g) # shape: batch X N_t X N_rf (out_feats/2), dtype: Complex64
+
             # Process data for loss calculation
 
-            # num_nodes = g.num_nodes('antenna') / batch_size
-            # num_rf = pred.shape[2]
-            # W = pred.view(batch_size, num_nodes, -1)
-            # W = torch.complex(W[:,:,:num_rf], W[:,:,num_rf:])
-
-            lhs = pilots.view(batch_size, -1) # dtype: float32
-            rhs = torch.matmul(torch.mul(torch.transpose(pred, dim0=1,dim1=2), combiner), channel) # dtype: complex64
-            rhs = torch.cat((rhs.reshape(batch_size,-1).real, rhs.reshape(batch_size,-1).imag), dim=1) # dtype: float32
+            # lhs = pilots.view(batch_size, -1) # dtype: float32
+            # rhs = torch.matmul(torch.mul(torch.transpose(pred, dim0=1,dim1=2), combiner), channel) # dtype: complex64
+            # rhs = torch.cat((rhs.reshape(batch_size,-1).real, rhs.reshape(batch_size,-1).imag), dim=1) # dtype: float32
             
-            loss = loss_fn(lhs, rhs)
-
-            # sanity_check = torch.matmul(torch.mul(w.to(device), combiner), channel)
-            # sanity_check = torch.cat((sanity_check.reshape(batch_size,-1).real, sanity_check.reshape(batch_size,-1).imag), dim=1)
-            # print(sanity_check)
-            # print(lhs)
-            # print(torch.isclose(sanity_check, lhs).cpu().numpy())
-            # np.savetxt('my_file.txt', torch.isclose(sanity_check, lhs).cpu().numpy().astype(int))
-            # print(np.where(torch.isclose(sanity_check, lhs).cpu().numpy() == False))
-            # print(sanity_check[2,10])
-            # print(lhs[2,10])
-            # print(sanity_check[11,13])
-            # print(lhs[11,13])
-            # exit(1)
-            # nn.MSELoss()(lhs.view(batch_size,-1), rhs.view(batch_size,-1))
-            # loss = loss_fn(pred, y)
+            # loss = loss_fn(lhs, rhs)
+            loss = deviation_loss(torch.transpose(pred, dim0=1, dim1=2), psn_dev)
+            cumu_loss += loss.item()
 
             # Backpropagation
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-        loss = loss.item()
+        avg_loss = cumu_loss / len(dataloader)
 
         # validation step
-        if (epoch+1) % 2 == 0:
+        if (epoch+1) % 3 == 0:
             # valid_loss = validate(validloader, model, loss_fn, device, dataloader.dataset.max, dataloader.dataset.min)
             num_batches = len(validloader)
             model.eval()
             valid_loss = 0
             with torch.no_grad():
-                for g, pilots, combiner, channel, _ in validloader:
+                for g, pilots, combiner, channel, psn_dev in validloader:
                     # inputs and labels normalization to [0,1]
-                    g, pilots, combiner, channel = g.to(device), pilots.to(device), combiner.to(device), channel.to(device)
-                    # feat_dict = g.ndata['feat']
-                    # user_feats = g.nodes['user'].data['feat']
-                    # antenna_feats = g.nodes['antenna'].data['feat']
-                    # feat_dict = {'antenna': antenna_feats, 'user': user_feats}
+                    g, pilots, combiner, channel, psn_dev = g.to(device), pilots.to(device), combiner.to(device), channel.to(device), psn_dev.to(device)
                     
-                    # Forward pass
                     pred = model(g) # shape: batch X N_t X N_rf (out_feats/2), dtype: Complex64
 
-                    # Process data for loss calculation
-                    # num_nodes = g.num_nodes('antenna') / batch_size
-                    # W = pred.view(batch_size, num_nodes, -1)
-                    # W = torch.complex(W[:,:,:num_rf], W[:,:,num_rf:])
-                    lhs = pilots.view(batch_size, -1) # dtype: float32
-                    rhs = torch.matmul(torch.mul(torch.transpose(pred, dim0=1,dim1=2), combiner), channel) # dtype: complex64
-                    rhs = torch.cat((rhs.reshape(batch_size,-1).real, rhs.reshape(batch_size,-1).imag), dim=1) # dtype: float32
-
-                    valid_loss += loss_fn(lhs, rhs).item()
+                    valid_loss += deviation_loss(torch.transpose(pred, dim0=1, dim1=2), psn_dev).item()
             
             valid_loss /= num_batches
             model.train()
@@ -426,17 +614,17 @@ def train(dataloader, validloader, model, loss_fn, optimizer, device, num_epochs
             if valid_loss < best_loss:
                 best_loss = valid_loss
                 outfile = '/ubc/ece/home/ll/grads/idanroth/Projects/gnn_psn_calib/models'
-                save_model(epoch+1, model, optimizer, loss_fn, best_loss, config, os.path.join(outfile, filename))
-            wandb.log({"loss": loss, "validation loss": valid_loss})
+                save_model(epoch+1, model, optimizer, best_loss, config, os.path.join(outfile, filename))
+            wandb.log({"loss": avg_loss, "validation loss": valid_loss})
         else:
-            wandb.log({"loss": loss})
+            wandb.log({"loss": avg_loss})
 
         
         t = (time.time() - start_time)
         h = int(np.floor(t/3600))
         m = int(np.floor((t-h*3600)/60))
         s = int(np.floor(t-h*3600-m*60))
-        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.8f}, Time: {h:0>2}:{m:0>2}:{s:0>2}")
+        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.8f}, Time: {h:0>2}:{m:0>2}:{s:0>2}")
 
     wandb.finish()
 
@@ -466,7 +654,7 @@ def train(dataloader, validloader, model, loss_fn, optimizer, device, num_epochs
 
 def test(dataloader, model, device):
     size = len(dataloader.dataset) 
-    # num_batches = len(dataloader)
+    num_batches = len(dataloader)
     # batch_size = dataloader.batch_size
     model.eval()
     test_loss = 0
@@ -487,13 +675,13 @@ def test(dataloader, model, device):
             # lhs = pilots
             # rhs = torch.matmul(torch.mul(W.T, combiner), channel)
 
-            # test_loss += loss_fn(lhs.view(batch_size,-1), rhs.view(batch_size,-1)).item()
+            test_loss += deviation_loss(pred, psn_dev).item()
 
             dev_rmse += rmse(pred, psn_dev) ############   GET batch of 2 Complex64 matrices  ################
-            exit(1)
          
     dev_rmse /= size
+    test_loss /= num_batches
  
-    print(f"Test Error: \n Avg RMSE: {dev_rmse:.8f} deg. \n")
+    print(f"Test Error: \n Avg RMSE: {dev_rmse:.8f} deg. \n Avg loss: {test_loss:.8f} \n")
     
     return dev_rmse
