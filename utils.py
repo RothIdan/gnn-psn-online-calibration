@@ -142,6 +142,10 @@ class GraphDataset(DGLDataset):
             self.M = data_dict['num_meas']
         except:
             self.M = 1
+        try:
+            self.Nb = data_dict['num_states']
+        except:
+            self.Nb = None
         # self.Nt = data_dict['num_antenna']
         # self.Nue = data_dict['num_user']
         
@@ -169,6 +173,10 @@ class GraphDatasetFixed(DGLDataset):
             self.M = data_dict['num_meas']
         except:
             self.M = 1
+        try:
+            self.Nb = data_dict['num_states']
+        except:
+            self.Nb = None
         # self.Nt = data_dict['num_antenna']
         # self.Nue = data_dict['num_user']
         

@@ -10,7 +10,7 @@ from dgl.dataloading import GraphDataLoader
 import argparse
 
 from utils import GraphDataset, system_model_loss, GraphDatasetFixed, deviation_loss
-from models import GraphNeuralNetwork, GraphNeuralNetwork2, GraphNeuralNetworkDrop, GraphNeuralNetworkConcat
+from models import GraphNeuralNetworkConcat, GraphNeuralNetworkConcat2
 
 import wandb, yaml, pprint, functools
 from multiprocessing import Process
@@ -27,17 +27,18 @@ def parse_args():
 
 
 def train(train_data, validation_data, d_in, d_out, M, config=None):
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # Initialize a new wandb run
     with wandb.init(config=config):
         # If called by wandb.agent, this config will be set by Sweep Controller
         config = wandb.config
 
-        train_dataloader = GraphDataLoader(dataset=train_data, batch_size=config.batch_size, shuffle=True, drop_last=False, num_workers=4)
+        train_dataloader = GraphDataLoader(dataset=train_data, batch_size=config.batch_size, shuffle=True, drop_last=True, num_workers=4)
         validation_dataloader = GraphDataLoader(dataset=validation_data, batch_size=config.batch_size, shuffle=False, drop_last=True, num_workers=4)
 
         # model = GraphNeuralNetworkDrop(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
-        model = GraphNeuralNetworkConcat(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
+        # model = GraphNeuralNetworkConcat(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
+        model = GraphNeuralNetworkConcat2(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
 
         if config.optim == 'ADAM':
             optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
@@ -90,6 +91,75 @@ def train(train_data, validation_data, d_in, d_out, M, config=None):
                 wandb.log({"loss": loss})
 
 
+def tensor_train(train_data, validation_data, d_in, d_out, M, config=None):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # Initialize a new wandb run
+    with wandb.init(config=config):
+        # If called by wandb.agent, this config will be set by Sweep Controller
+        config = wandb.config
+
+        train_dataloader = GraphDataLoader(dataset=train_data, batch_size=config.batch_size, shuffle=True, drop_last=True, num_workers=4)
+        validation_dataloader = GraphDataLoader(dataset=validation_data, batch_size=config.batch_size, shuffle=False, drop_last=True, num_workers=4)
+
+        # model = GraphNeuralNetworkDrop(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
+        # model = GraphNeuralNetworkConcat(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
+        model = GraphNeuralNetworkConcat2(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
+
+        if config.optim == 'ADAM':
+            optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+        elif config.optim == 'SGD':
+            optimizer = torch.optim.SGD(model.parameters(), lr=config.learning_rate, momentum=0.9, weight_decay=config.weight_decay)
+
+        for epoch in range(config.epochs):
+            # Train
+            cumu_loss = 0  
+            for i, (g, _, _, _, psn_dev) in enumerate(train_dataloader):
+                # g, pilots, combiner, channel, psn_dev = g.to(device), pilots.to(device), combiner.to(device), channel.to(device), psn_dev.to(device)
+                g, psn_dev = g.to(device), psn_dev.to(device)
+                _, Nrf, Nt, Nb = psn_dev.shape
+                pred = model(g) # shape: batch X N_t X N_rf * Nb (out_feats/2), dtype: Complex64
+                pred = torch.transpose(pred.reshape(config.batch_size, Nt, Nrf, Nb), dim0=1, dim1=2)
+                # y_pred = torch.matmul(torch.mul(torch.transpose(pred, dim0=1,dim1=2).repeat(1,M,1), combiner), channel) # dtype: complex64
+
+
+                # loss = system_model_loss(pilots, y_pred) + alpha * deviation_loss(pred, psn_dev)
+                # loss = system_model_loss(pilots, y_pred)
+                loss = deviation_loss(pred, psn_dev)
+                cumu_loss += loss.item()
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+            loss = cumu_loss / len(train_dataloader)
+
+            # Validation
+            if (epoch+1) % 3 == 0:
+                model.eval()
+                valid_loss = 0
+                with torch.no_grad():
+                    for g, _, _, _, psn_dev in validation_dataloader:
+                        # g, pilots, combiner, channel, psn_dev = g.to(device), pilots.to(device), combiner.to(device), channel.to(device), psn_dev.to(device)
+                        g, psn_dev = g.to(device), psn_dev.to(device)
+                        _, Nrf, Nt, Nb = psn_dev.shape
+                        pred = model(g) # shape: batch X N_t X N_rf * Nb (out_feats/2), dtype: Complex64
+                        pred = torch.transpose(pred.reshape(config.batch_size, Nt, Nrf, Nb), dim0=1, dim1=2)
+                        # valid_loss += system_model_loss(pilots, y_pred).item()
+                        valid_loss += deviation_loss(pred, psn_dev).item()
+
+                valid_loss /= len(validation_dataloader)
+
+                model.train()
+            
+                wandb.log({"loss": loss, "validation loss": valid_loss})
+
+            else:
+                wandb.log({"loss": loss})
+            
+            if (epoch+1) == 100 and valid_loss > 0.03: # Early stopping
+                    break
+
+
 
 
 
@@ -110,13 +180,18 @@ if __name__ == "__main__":
     dirc = "/ubc/ece/home/ll/grads/idanroth/Projects/gnn_psn_calib/"
     path = os.path.join(dirc + "data/", args.data_filename)
 
-    # dataset = GraphDataset(args.data_filename, path)
-    dataset = GraphDatasetFixed(args.data_filename, path)
+    if 'fixed' in os.path.splitext(args.data_filename)[0].split('_'):
+        dataset = GraphDatasetFixed(args.data_filename, path)
+    else:
+        dataset = GraphDataset(args.data_filename, path)
 
-    train_data, validation_data = dgl.data.utils.split_dataset(dataset, [0.9, 0.1], random_state=2)
+    train_data, validation_data = dgl.data.utils.split_dataset(dataset, [0.88, 0.12], random_state=2)
     
     d_in = 2*dataset.M*dataset.Nrf
-    d_out = 2*dataset.Nrf
+    if 'tensor' in os.path.splitext(args.data_filename)[0].split('_'):
+        d_out = 2*dataset.Nrf*dataset.Nb
+    else:
+        d_out = 2*dataset.Nrf
     
     # device1 = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # device2 = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")

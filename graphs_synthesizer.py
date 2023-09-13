@@ -226,6 +226,8 @@ if __name__ == "__main__":
         with open( path + '/params.txt', 'w') as f:
             f.write('Graph Parameters \n')
             f.write(f'\t {B}-bit phase shifters \n')
+            if args.antenna_feat:
+                f.write(f'\t Both node type features were intialized \n')
             if args.edge_feat:
                 f.write(f'\t Channel as uplink edge features \n')
             f.write(f'\t Antennas: {Nt}, users: {Nue}, rf-chains: {Nrf}, measurements: {N}\n')

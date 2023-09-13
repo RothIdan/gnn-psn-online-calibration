@@ -12,7 +12,7 @@ from datetime import datetime
 
 from utils import GraphDataset, LossFn, GraphDatasetFixed
 # from models import GraphNeuralNetwork, GraphNeuralNetwork2, GraphNeuralNetworkDGL, GraphNeuralNetworkDrop, GraphNeuralNetworkConcat2, GraphNeuralNetworkDrop2, WeightedGraphNeuralNetwork,  ChannelGraphNeuralNetwork, GraphAttentionlNetworkDGL, GraphNeuralNetworkConcat, train, test
-from models import GraphNeuralNetworkConcat2, GraphNeuralNetworkConcat, train, test
+from models import GraphNeuralNetworkConcat2, GraphNeuralNetworkConcat, train, test, tensor_train, tensor_test
 
 import wandb
 import yaml
@@ -46,19 +46,19 @@ if __name__ == "__main__":
 
     args = parse_args() # getting all the init args from input
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda:1" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
 
     
     # hyper-parameters
-    num_epochs = 200
-    batch_size = 1024
-    learning_rate = 1e-4
+    num_epochs = 550
+    batch_size =  1024 #512 
+    learning_rate = 1e-4  
     betas = (0.9, 0.999)
-    weight_decay = 1e-5
-    dropout = 0.1
-    d_h = 512
-    n_layer = 1
+    weight_decay = 1e-7 #1e-5 #0
+    dropout = 0.05 #0.1 #0.26 
+    d_h = 1024 #1426 #512 #1321 #512 #928
+    n_layer = 1 #1 #2
     
     
     dirc = "/ubc/ece/home/ll/grads/idanroth/Projects/gnn_psn_calib/"
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         train_data, validation_data, test_data = torch.utils.data.random_split(dataset, [0.92, 0.04, 0.04])
     else:
         # train_data, validation_data, test_data = torch.utils.data.random_split(dataset, [0.8, 0.1, 0.1])
-        train_data, validation_data, test_data = dgl.data.utils.split_dataset(dataset, [0.85, 0.1, 0.05], random_state=2, shuffle=True)
+        train_data, validation_data, test_data = dgl.data.utils.split_dataset(dataset, [0.88, 0.08, 0.04], random_state=2)#, shuffle=True)
     # Save test dataset for later use
     if not os.path.isfile(path + "/test_dataset"):
         torch.save(test_data, path + "/test_dataset")
@@ -81,7 +81,10 @@ if __name__ == "__main__":
 
     # d_in = d_out = 2*dataset.Nrf
     d_in = 2*dataset.M*dataset.Nrf
-    d_out = 2*dataset.Nrf
+    if 'tensor' in os.path.splitext(args.data_filename)[0].split('_'):
+        d_out = 2*dataset.Nrf*dataset.Nb
+    else:
+        d_out = 2*dataset.Nrf
     # d_out = 2*dataset.Nrf*16
 
     if args.activation not in ['ReLU', 'ELU']:
@@ -99,9 +102,11 @@ if __name__ == "__main__":
     # model = ChannelGraphNeuralNetwork(d_in, d_h, d_out, n_layer, activation_fn=activation_fn, dropout=dropout).to(device)
     # model = GraphNeuralNetworkDrop(d_in, d_h, d_out, n_layer, activation_fn=activation_fn, dropout=dropout).to(device)
     # model = GraphNeuralNetworkDrop2(d_in, d_h, d_out, n_layer, activation_fn=activation_fn, dropout=dropout).to(device)
-    model = GraphNeuralNetworkConcat(d_in, d_h, d_out, n_layer, activation_fn=activation_fn, dropout=dropout).to(device)
     if '2feat' in os.path.splitext(args.data_filename)[0].split('_'):
         model = GraphNeuralNetworkConcat2(d_in, d_h, d_out, n_layer, activation_fn=activation_fn, dropout=dropout).to(device)
+    else:
+        model = GraphNeuralNetworkConcat(d_in, d_h, d_out, n_layer, activation_fn=activation_fn, dropout=dropout).to(device)
+    
     # model = GraphAttentionlNetworkDGL(d_in, d_h, d_out, n_heads=3, activation_fn=activation_fn, dropout=dropout).to(device)
     # model = GraphNeuralNetwork2(d_in, d_h, d_out, n_layer, activation_fn=nn.ELU()).to(device)
     # model = WeightedGraphNeuralNetwork(d_in, d_h, d_out, n_layer, activation_fn=activation_fn, dropout=dropout).to(device)
@@ -135,14 +140,16 @@ if __name__ == "__main__":
     config = {"graph": args.data_filename, "epochs": num_epochs, "h_dim": d_h, "mlp_layer": n_layer, "batch_size": batch_size, "lr": learning_rate,
               "weight_decay": weight_decay, "dropout": dropout, "optim": args.optimizer, "num_rfchain": dataset.Nrf, "num_meas": dataset.M, 'act': args.activation} # for W&B 
     if not args.saving_filename: 
-        saving_filename = f"dev_cat_BN_{config['graph']}_{datetime.now().strftime('%d-%m-%Y-@-%H:%M')}_{config['optim']}_mlp-layer_" \
+        saving_filename = f"{config['graph']}_{datetime.now().strftime('%d-%m-%Y-@-%H:%M')}_{config['optim']}_mlp-layer_" \
                         + f"{n_layer}_lr_{learning_rate}_dh_{d_h}_batch_{batch_size}_act_{config['act']}_do_{config['dropout']}_wd_{config['weight_decay']}.pth"
     else:
         saving_filename = args.saving_filename  
 
     # train(train_dataloader, validation_dataloader, model, loss_fn, optimizer, device, num_epochs, config, saving_filename)
-    train(train_dataloader, validation_dataloader, model, optimizer, device, num_epochs, config, saving_filename, args.mode)
-
+    if 'tensor' in os.path.splitext(args.data_filename)[0].split('_'):    
+        tensor_train(train_dataloader, validation_dataloader, model, optimizer, device, num_epochs, config, saving_filename, args.mode)
+    else:
+        train(train_dataloader, validation_dataloader, model, optimizer, device, num_epochs, config, saving_filename, args.mode)
     # Test phase
     test_dataloader = GraphDataLoader(test_data, batch_size=batch_size, shuffle=False)
     # model_test = GraphNeuralNetworkDrop(d_in, d_h, d_out, n_layer, activation_fn=activation_fn, dropout=dropout).to(device)
@@ -152,7 +159,10 @@ if __name__ == "__main__":
     path = os.path.join(dirc + "models/", saving_filename)
     model_test.load_state_dict(torch.load(path)['model_state_dict'])
 
-    test(test_dataloader, model_test, device)
+    if 'tensor' in os.path.splitext(args.data_filename)[0].split('_'):
+        tensor_test(test_dataloader, model_test, device)
+    else:
+        test(test_dataloader, model_test, device)
     print("Done!")
  
 

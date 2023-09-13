@@ -1,0 +1,52 @@
+program: param_scan.py
+command:
+  - ${env}
+  - python3
+  - ${program}
+  # - ${args}
+method: random #bayes
+metric: # for bayes sweep
+  goal: minimize
+  name: validation loss # the exact name of the wandb.log()
+parameters:
+  optim:
+    values:
+      - "ADAM"
+      # - "SGD"
+    distribution: categorical
+  batch_size:
+    values:
+      # - 128 
+      # - 256
+      - 512
+      - 1024
+    distribution: categorical
+  epochs:
+    value: 220
+  d_h:
+    max: 4096
+    min: 512
+    distribution: int_uniform
+  n_layer:
+    max: 2
+    min: 1
+    distribution: int_uniform
+  learning_rate:
+    max: 0.0008
+    min: 0.00001
+    distribution: uniform
+  dropout:
+    max: 0.4
+    min: 0
+    distribution: uniform
+  weight_decay:
+    # value: 0
+    values:
+      # - 0.001
+      # - 0.0001
+      # - 0.00001
+      - 0.000001
+      - 0.0000001
+      - 0
+    distribution: categorical
+

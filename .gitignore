@@ -4,3 +4,7 @@ models
 *.log
 wandb
 __pycache__
+irs
+notebook.py
+*_old*
+kfold_train.py
