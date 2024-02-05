@@ -10,7 +10,7 @@ from dgl.dataloading import GraphDataLoader
 import argparse
 
 from utils import GraphDataset, system_model_loss, GraphDatasetFixed, deviation_loss
-from models import GraphNeuralNetworkConcat, GraphNeuralNetworkConcat2
+from models import GraphNeuralNetworkConcat, GraphNeuralNetworkConcat2, Edge3DGNN, EdgeGraphNeuralNetwork
 
 import wandb, yaml, pprint, functools
 from multiprocessing import Process
@@ -36,9 +36,8 @@ def train(train_data, validation_data, d_in, d_out, M, config=None):
         train_dataloader = GraphDataLoader(dataset=train_data, batch_size=config.batch_size, shuffle=True, drop_last=True, num_workers=4)
         validation_dataloader = GraphDataLoader(dataset=validation_data, batch_size=config.batch_size, shuffle=False, drop_last=True, num_workers=4)
 
-        # model = GraphNeuralNetworkDrop(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
-        # model = GraphNeuralNetworkConcat(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
-        model = GraphNeuralNetworkConcat2(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
+        # model = GraphNeuralNetworkConcat2(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
+        model = EdgeGraphNeuralNetwork(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
 
         if config.optim == 'ADAM':
             optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
@@ -101,9 +100,9 @@ def tensor_train(train_data, validation_data, d_in, d_out, M, config=None):
         train_dataloader = GraphDataLoader(dataset=train_data, batch_size=config.batch_size, shuffle=True, drop_last=True, num_workers=4)
         validation_dataloader = GraphDataLoader(dataset=validation_data, batch_size=config.batch_size, shuffle=False, drop_last=True, num_workers=4)
 
-        # model = GraphNeuralNetworkDrop(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
-        # model = GraphNeuralNetworkConcat(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
-        model = GraphNeuralNetworkConcat2(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
+
+        # model = GraphNeuralNetworkConcat2(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
+        model = EdgeGraphNeuralNetwork(d_in, config.d_h, d_out, config.n_layer, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
 
         if config.optim == 'ADAM':
             optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
@@ -118,13 +117,21 @@ def tensor_train(train_data, validation_data, d_in, d_out, M, config=None):
                 g, psn_dev = g.to(device), psn_dev.to(device)
                 _, Nrf, Nt, Nb = psn_dev.shape
                 pred = model(g) # shape: batch X N_t X N_rf * Nb (out_feats/2), dtype: Complex64
-                pred = torch.transpose(pred.reshape(config.batch_size, Nt, Nrf, Nb), dim0=1, dim1=2)
-                # y_pred = torch.matmul(torch.mul(torch.transpose(pred, dim0=1,dim1=2).repeat(1,M,1), combiner), channel) # dtype: complex64
+                # pred = torch.transpose(pred.reshape(config.batch_size, Nt, Nrf, Nb), dim0=1, dim1=2)
+                # loss = deviation_loss(pred, psn_dev)
 
+
+                # y_pred = torch.matmul(torch.mul(torch.transpose(pred, dim0=1,dim1=2).repeat(1,M,1), combiner), channel) # dtype: complex64
 
                 # loss = system_model_loss(pilots, y_pred) + alpha * deviation_loss(pred, psn_dev)
                 # loss = system_model_loss(pilots, y_pred)
-                loss = deviation_loss(pred, psn_dev)
+
+                
+                loss = 0
+                for w in pred:
+                    w = torch.transpose(w.reshape(config.batch_size, Nt, Nrf, Nb), dim0=1, dim1=2) # shape: batch X N_rf X N_t X N_b
+                    loss += deviation_loss(w, psn_dev)
+
                 cumu_loss += loss.item()
 
                 optimizer.zero_grad()
@@ -143,7 +150,7 @@ def tensor_train(train_data, validation_data, d_in, d_out, M, config=None):
                         g, psn_dev = g.to(device), psn_dev.to(device)
                         _, Nrf, Nt, Nb = psn_dev.shape
                         pred = model(g) # shape: batch X N_t X N_rf * Nb (out_feats/2), dtype: Complex64
-                        pred = torch.transpose(pred.reshape(config.batch_size, Nt, Nrf, Nb), dim0=1, dim1=2)
+                        pred = torch.transpose(pred[-1].reshape(config.batch_size, Nt, Nrf, Nb), dim0=1, dim1=2)
                         # valid_loss += system_model_loss(pilots, y_pred).item()
                         valid_loss += deviation_loss(pred, psn_dev).item()
 
@@ -156,9 +163,98 @@ def tensor_train(train_data, validation_data, d_in, d_out, M, config=None):
             else:
                 wandb.log({"loss": loss})
             
-            if (epoch+1) == 100 and valid_loss > 0.03: # Early stopping
+            if (epoch+1) == 150 and valid_loss > 0.012: # Early stopping
                     break
 
+
+
+def edge_train(train_data, validation_data, d_in, d_out, config=None):
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    # Initialize a new wandb run
+    with wandb.init(config=config):
+        # If called by wandb.agent, this config will be set by Sweep Controller
+        config = wandb.config
+
+        train_dataloader = GraphDataLoader(dataset=train_data, batch_size=config.batch_size, shuffle=True, drop_last=True, num_workers=4)
+        validation_dataloader = GraphDataLoader(dataset=validation_data, batch_size=config.batch_size, shuffle=False, drop_last=True, num_workers=4)
+
+
+        model = Edge3DGNN(d_in, config.d_h, d_out, config.conv_layers, config.mlp_layers, activation_fn=nn.ReLU(), dropout=config.dropout).to(device)
+
+        if config.optim == 'ADAM':
+            optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+        elif config.optim == 'SGD':
+            optimizer = torch.optim.SGD(model.parameters(), lr=config.learning_rate, momentum=0.9, weight_decay=config.weight_decay)
+
+        batch_size = train_dataloader.batch_size
+        for epoch in range(config.epochs):
+            # Train
+            cumu_loss = 0
+            for i, (g, pilots, combiner, channel, psn_dev) in enumerate(train_dataloader):  
+                # Each i is a batch of batch_size samples
+                # Shapes: psn_dev: batch X Nrf X Nt (X Nb), channel: batch X Nt X Nue, pilots: batch X Q*Nrf X Nue, combiner: Q*Nrf X Nt
+                g, pilots, combiner, channel, psn_dev = g.to(device), pilots.to(device), combiner.to(device), channel.to(device), psn_dev.to(device)
+                
+                Nrf, Nt = psn_dev.shape[1], psn_dev.shape[2]
+                Nb = psn_dev.shape[3] if psn_dev.dim() == 4 else None
+                Q = pilots.shape[1] // Nrf
+
+                # Predict the PSN deviation matrices - W
+                pred = model(g) # shape: batch X Nt*Nrf X 1 or Nb, dtype: Complex64 
+
+                # Process data for loss calculation
+                loss = 0
+                for w in pred:
+                    w = w.reshape(batch_size, Nrf, Nt) if Nb is None else w.reshape(batch_size, Nrf, Nt, Nb) # dtype: Complex64
+                    lhs = torch.concat((pilots.reshape(batch_size, -1).real, pilots.reshape(batch_size, -1).imag), dim=1) # Shape: batch X 2*Q*Nrf*Nue, dtype: float32
+                    rhs = torch.matmul(torch.mul(torch.kron(torch.ones(Q,1).to(device), w), combiner), channel) # Shape: batch X Q*Nrf X Nue, dtype: complex64
+                    rhs = torch.concat((rhs.reshape(batch_size, -1).real, rhs.reshape(batch_size, -1).imag), dim=1) # Shape: batch X 2*Q*Nrf*Nue, dtype: float32
+
+                    loss += system_model_loss(lhs, rhs)
+            
+                cumu_loss += loss.item()
+
+                # Backpropagation
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+            loss = cumu_loss / len(train_dataloader)
+            # scheduler.step()
+
+            # validation step
+            if (epoch+1) % 3 == 0:
+                # valid_loss = validate(validloader, model, loss_fn, device, dataloader.dataset.max, dataloader.dataset.min)
+                num_batches = len(validation_dataloader)
+                size = len(validation_dataloader.dataset) 
+                model.eval()
+                valid_loss = 0
+                with torch.no_grad():
+                    for g, pilots, combiner, channel, psn_dev in validation_dataloader:
+                
+                        g, pilots, combiner, channel, psn_dev = g.to(device), pilots.to(device), combiner.to(device), channel.to(device), psn_dev.to(device)
+                        
+                        pred = model(g) # shape: batch X N_t X N_rf (out_feats/2), dtype: Complex64
+
+                        w = pred[-1].reshape(batch_size, Nrf, Nt) if Nb is None else w.reshape(batch_size, Nrf, Nt, Nb) # dtype: Complex64
+                        lhs = torch.concat((pilots.reshape(batch_size, -1).real, pilots.reshape(batch_size, -1).imag), dim=1) # Shape: batch X 2*Q*Nrf*Nue, dtype: float32
+                        rhs = torch.matmul(torch.mul(torch.kron(torch.ones(Q,1).to(device), w), combiner), channel) # Shape: batch X Q*Nrf X Nue, dtype: complex64
+                        rhs = torch.concat((rhs.reshape(batch_size, -1).real, rhs.reshape(batch_size, -1).imag), dim=1) # Shape: batch X 2*Q*Nrf*Nue, dtype: float32
+
+                        valid_loss += system_model_loss(lhs, rhs).item()
+                      
+                
+                valid_loss /= num_batches
+
+                model.train()
+            
+                wandb.log({"loss": loss, "validation loss": valid_loss})
+
+            else:
+                wandb.log({"loss": loss})
+            
+            if (epoch+1) == 70 and valid_loss > 40: # Early stopping
+                    break
 
 
 
@@ -170,7 +266,7 @@ if __name__ == "__main__":
 
     args = parse_args() # getting all the init args from input
 
-    with open('sweep_config.yaml', 'r') as stream:
+    with open('/ubc/ece/home/ll/grads/idanroth/Projects/gnn_psn_calib/sweep_config.yaml', 'r') as stream:
         sweep_config = yaml.safe_load(stream)
     
     pprint.pprint(sweep_config)
@@ -185,13 +281,21 @@ if __name__ == "__main__":
     else:
         dataset = GraphDataset(args.data_filename, path)
 
-    train_data, validation_data = dgl.data.utils.split_dataset(dataset, [0.88, 0.12], random_state=2)
+    # train_data, validation_data = dgl.data.utils.split_dataset(dataset, [0.88, 0.12], random_state=2)
+    train_data, validation_data, test_data = dgl.data.utils.split_dataset(dataset, [0.88, 0.08, 0.04], random_state=2)
     
-    d_in = 2*dataset.M*dataset.Nrf
+    d_in = 2*dataset.Q*dataset.Nrf
     if 'tensor' in os.path.splitext(args.data_filename)[0].split('_'):
         d_out = 2*dataset.Nrf*dataset.Nb
     else:
         d_out = 2*dataset.Nrf
+    
+    if 'edge' in os.path.splitext(args.data_filename)[0].split('_'):
+        d_in = {'channel' : 2,
+                'psn'     : 2*dataset.Q,
+                'pilot'   : 2*dataset.Q }
+        
+        d_out = 2
     
     # device1 = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # device2 = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
@@ -202,9 +306,11 @@ if __name__ == "__main__":
     # wandb.agent(sweep_id, function=train_func1, count=50)
     # wandb.agent(sweep_id, function=train_func2, count=50)
 
-    train_func = functools.partial(train, train_data, validation_data, d_in, d_out, dataset.M)
+    # train_func = functools.partial(train, train_data, validation_data, d_in, d_out, dataset.M)
+    # train_func = functools.partial(tensor_train, train_data, validation_data, d_in, d_out, dataset.M)
+    train_func = functools.partial(edge_train, train_data, validation_data, d_in, d_out)
 
-    wandb.agent(sweep_id, function=train_func, count=50)
+    wandb.agent(sweep_id, function=train_func, count=60)
     # train(train_data, validation_data, d_in, d_out, dataset.M)
    
    

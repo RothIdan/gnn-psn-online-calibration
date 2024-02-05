@@ -9,8 +9,8 @@ from dgl.dataloading import GraphDataLoader
 import argparse
 from datetime import datetime
 
-from utils import GraphDataset
-from models import GraphNeuralNetwork, GraphNeuralNetwork2, GraphNeuralNetworkDGL, GraphNeuralNetworkDrop, train, test
+from utils import GraphDataset, GraphDatasetFixed
+from models import GraphNeuralNetworkConcat, GraphNeuralNetworkConcat2,EdgeGraphNeuralNetwork, test, tensor_test
 
 
 
@@ -47,7 +47,12 @@ if __name__ == "__main__":
     model_dict = torch.load(modelpath)
 
     data_filename = args.data_filename  
-    test_data = torch.load(datapath + "/test_dataset")
+
+    # test_data = torch.load(datapath + "/test_dataset")
+    if 'fixed' in os.path.splitext(data_filename)[0].split('_'):
+        test_data = GraphDatasetFixed(data_filename+'_test', datapath)
+    else:
+        test_data = GraphDataset(data_filename+'_test', datapath)
 
     # hyper-parameters
     batch_size = model_dict['batch_size']
@@ -57,20 +62,31 @@ if __name__ == "__main__":
     n_layer = model_dict['mlp_layer']
     d_in = 2*model_dict['num_meas']*model_dict['num_rfchain']
     d_out = 2*model_dict['num_rfchain']
-    dropout = 0.1
-    # batch_size = 512
-    # d_h = 256
-    # n_layer = 2
-    # d_in = d_out = 2*2
+    dropout = model_dict['dropout']
 
-    test_dataloader = GraphDataLoader(test_data, batch_size=batch_size, shuffle=False)
+    if 'tensor' in os.path.splitext(args.data_filename)[0].split('_'):
+        try:
+            d_out = 2*model_dict['num_rfchain']*model_dict['num_states']
+        except:
+            d_out = 2*model_dict['num_rfchain']*16
+    else:
+        d_out = 2*model_dict['num_rfchain']
     
-    # model = GraphNeuralNetwork2(d_in, d_h, d_out, n_layer, activation_fn=nn.ReLU()).to(device)
-    model = GraphNeuralNetworkDrop(d_in, d_h, d_out, n_layer, activation_fn=nn.ReLU(), dropout=dropout).to(device)
+    
+    test_dataloader = GraphDataLoader(test_data, batch_size=batch_size, shuffle=False)
+    # model_test = GraphNeuralNetworkDrop(d_in, d_h, d_out, n_layer, activation_fn=activation_fn, dropout=dropout).to(device)
+    model_test = GraphNeuralNetworkConcat(d_in, d_h, d_out, n_layer, activation_fn=nn.ReLU(), dropout=dropout).to(device)
+    if '2feat' in os.path.splitext(args.data_filename)[0].split('_'):
+        model_test = GraphNeuralNetworkConcat2(d_in, d_h, d_out, n_layer, activation_fn=nn.ReLU(), dropout=dropout).to(device)
+    if 'channel' in os.path.splitext(args.data_filename)[0].split('_'):
+        model_test = EdgeGraphNeuralNetwork(d_in, d_h, d_out, n_layer, activation_fn=nn.ReLU(), dropout=dropout).to(device)
+    model_test.load_state_dict(model_dict['model_state_dict'])
+    
 
-    model.load_state_dict(model_dict['model_state_dict'])
-
-    test(test_dataloader, model, device)
+    if 'tensor' in os.path.splitext(args.data_filename)[0].split('_'):
+        tensor_test(test_dataloader, model_test, device)
+    else:
+        test(test_dataloader, model_test, device)
     print("Done!")
  
 
