@@ -1,4 +1,6 @@
-# A GNN approach for phase shifters network online calibration 
+# Graph Neural Network-Aided Online Calibration of Phase Shifter Networks
+
+<br>
 
 ## Installation
 
@@ -7,6 +9,7 @@ Type the following command in the command line to create an Anaconda environemen
 ```bash
 conda create --name <env> --file requirements.txt
 ```
+
 
 ## Files
 
@@ -152,4 +155,4 @@ python train.py -fn 'tensor_graph_fixed_2feat_20db_03Jan24' -csi True
 
 
 
-#### Code was written by Idan Roth, idanroth@ece.ubc.ca, under the supervision of Dr. Lutz Lampe from the ECE department at UBC, in colaboration with Huawei Canada. 
+#### Code was written by Idan Roth, idanroth@ece.ubc.ca, under the supervision of Prof. Lutz Lampe from the ECE department at UBC.

@@ -13,7 +13,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-fn', '--filename', type=str, help=".dgl file name of data, e.g., 'graph1'", required=True)
     parser.add_argument('-n', '--num_graphs', type=int, help="dataset size", default=320000)
-    parser.add_argument('-e', '--edge_feat', type=bool, help="True to use channel as edge features, False otherwise", default=False)
+    parser.add_argument('-e', '--edge_feat', type=bool, help="True to add channel data in graph edge features, False otherwise", default=True)
     parser.add_argument('-norm', '--norm', type=bool, help="True to normalize dataset", default=True)
     parser.add_argument('-tfeat', '--antenna_feat', type=bool, help="True to use combiner as antenna node features", default=True)
 
@@ -31,6 +31,8 @@ def generate_pilots(Nrf, Nt, Nue, Nb, P, indices, dl, dev, sigma2, N):
 
     W = np.deg2rad(np.random.uniform(-dev,dev,size=(Nrf,Nt,Nb)), dtype=np.float32) # PSN deviations - estimation goal
     W = np.exp(1j * W) # dtype = complex64, shape: Nrf X Nt X Nb
+    # Eliminates phase shift ambiguity
+    W[0,0,0] = 1 # set the phase deviation to be zero
     psn_dev = np.transpose(W,[2,0,1]).reshape(Nb, Nrf*Nt)
 
     # Channel realizations
@@ -120,6 +122,7 @@ if __name__ == "__main__":
 
     graphs = []
     data_dict = {}
+    data_dict_extest = {}
 
     print(f"System model parameters:\n no. antenna: {Nt}, no. users: {Nue}, no. RF chains: {Nrf}, no. measurements: {Q}, no. multipath: {dl}, SNR: {snr_db} dB, {B}-bit phase shifter")
 
@@ -127,9 +130,14 @@ if __name__ == "__main__":
     data_dict['num_meas'] = Q
     data_dict['num_states'] = Nb
     data_dict['pilot_len'] = N
+    data_dict_extest['num_rfchain'] = Nrf
+    data_dict_extest['num_meas'] = Q
+    data_dict_extest['num_states'] = Nb
+    data_dict_extest['pilot_len'] = N
     # data_dict['num_antenna'] = Nt
     # data_dict['num_user'] = Nue
     psn_dev, pilots, combiner, channel = [],[],[],[]
+    psn_dev_extest, pilots_extest, combiner_extest, channel_extest = [],[],[],[]
 
     # Generating a random combiner for each measurement (fixed for all samples)
     # Using B-bit phase shifters
@@ -144,9 +152,13 @@ if __name__ == "__main__":
     #     Pq = phases_list[idx[q].reshape(Nrf,Nt)]
     #     Pq = np.exp(1j * Pq) # Analog combiner is unit modulus
     #     combiner.append(Pq)
+    data_dict['indices'] = idx
     
     P = phases_list[idx.reshape(Q,Nrf,Nt)]
     combiner = np.exp(1j * P)
+
+
+
 
     snr = 10**(snr_db/10)
     sigma2 = 1/snr
@@ -155,6 +167,7 @@ if __name__ == "__main__":
         psn_dev.append(W)
         pilots.append(Y)
         channel.append(H)
+    
 
     # pilots = np.array(pilots)
     # # Additive noise
@@ -171,6 +184,10 @@ if __name__ == "__main__":
 
     feat = np.transpose(np.array(pilots), (0,2,1))
     feat = np.concatenate((feat.real, feat.imag), axis=2)
+
+    # # Concatenate CSI to pilot as feature
+    # channel_feat = np.transpose(np.array(channel), (0,2,1))
+    # feat = np.concatenate((feat.real, feat.imag, channel_feat.real, channel_feat.imag), axis=2)
 
     if args.antenna_feat:
         antenna_feat = np.transpose(combiner.reshape(Q*Nrf, -1), (1,0))
@@ -193,15 +210,23 @@ if __name__ == "__main__":
         g.nodes['user'].data['feat'] = torch.tensor(feat[i]) # shape: Nue X 2*Q*Nrf
         if args.antenna_feat:
             g.nodes['antenna'].data['feat'] = torch.tensor(antenna_feat) # shape: Nt X 2*Q*Nrf
+        if args.edge_feat:
+            H = channel[i] # shape: Nt X Nue
+            # Use transposed channel for channel2an because according to the defined graph data, the edges ordering is 0: (src0 to dst0), 1: (src0 to dst1),... 
+            # or src: [0,...,0,1...,1,2,...] to dst: [0,1,2,...,0,1,2,...]) where the src is a UE and the dst is the antenna, and because .reshape(-1,1) stacks row-wise
+            edge_features_2a = np.hstack([H.T.reshape(-1,1).real, H.T.reshape(-1,1).imag], dtype=np.float32) # shape: Nt*Nue X 2, order: h00, h01, h02,...,h0Nt, h10,... 
+            g.edges['channel2a'].data['e'] = torch.tensor(edge_features_2a) # use as feats for uplink edges
+            edge_features_2u = np.hstack([H.reshape(-1,1).real, H.reshape(-1,1).imag], dtype=np.float32) # shape: Nue*Nt X 2, order: h00, h10, h20,...,hNue0, h01,... 
+            g.edges['channel2u'].data['e'] = torch.tensor(edge_features_2u) # use as feats for downlink edges
+
         graphs.append(g)
 
     
 
-    data_dict['psn_dev'] = np.array(psn_dev)
-    data_dict['channel'] = np.array(channel)
-    data_dict['pilots'] = np.array(pilots)
+    data_dict['psn_dev'] = np.array(psn_dev)[:args.num_graphs]
+    data_dict['channel'] = np.array(channel)[:args.num_graphs]
+    data_dict['pilots'] = np.array(pilots)[:args.num_graphs]
     data_dict['combiner'] = np.array(combiner).reshape(Q*Nrf, -1) # Stacking combiner matrices vertically
-
 
     # save the complete graphs
     # outfile = '/ubc/ece/home/ll/grads/idanroth/Desktop/eece_571f_project/data/dataset'
@@ -224,7 +249,7 @@ if __name__ == "__main__":
             if args.antenna_feat:
                 f.write(f'\t Both node type features were intialized \n')
             if args.edge_feat:
-                f.write(f'\t Channel as uplink edge features \n')
+                f.write(f'\t Channel as uplink and downlink edge features \n')
             f.write(f'\t Antennas: {Nt}, users: {Nue}, rf-chains: {Nrf}, measurements: {Q}\n')
             f.write(f'\t Pilot length: {N}, SNR: {snr_db} dB, multipath: {dl}, data size: {args.num_graphs}\n')
 
