@@ -12,8 +12,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-fn', '--filename', type=str, help=".dgl file name of data, e.g., 'graph1'", required=True)
     parser.add_argument('-n', '--num_graphs', type=int, help="dataset size", default=440000)
-    parser.add_argument('-tensor', '--tensor_flag', help="activate for the tensor version of phase shifter network deviations", action="store_true")
-    parser.add_argument('-tx', '--tx_flag', help="activate for the transmitter calibartion system model version", action="store_true")
+    parser.add_argument('-tensor', '--tensor_flag', help="activate flag for the tensor form of the phase shifter network deviations", action="store_true")
+    parser.add_argument('-tx', '--tx_flag', help="activate flag for the transmitter calibartion version", action="store_true")
 
     return parser.parse_args()
 
@@ -162,12 +162,12 @@ def generate_pilots(Nrf, Nr, Nue, P, dl, f, dev, tx_flag=False, dist="uniform", 
 if __name__ == "__main__":
     start_time = time.time()
     args = parse_args() # getting all the init args from input
-    path = "/ubc/ece/home/ll/grads/idanroth/Projects/gnn_psn_calib/data/" + args.filename
+    path = "<full_path_name>/data/" + args.filename # NOTE: need to replace <...> with the full path name of the directory which contain the script
     graph_data = {}
 
    
     # System model parameters
-    if args.tensor_flag:
+    if args.tensor_flag: # Tensor system model parameters
         f = 28e9 # transmission frequency
         Nr = 8 # no. of antenna elements
         Nue = 4 # no. of UEs
@@ -180,20 +180,22 @@ if __name__ == "__main__":
         Nb = 2**B
         Q = O*Nb # no. of measurements
         snr = 10**(snr_db/10)
+        dist = 'gaussian' # phase deviation distribution: 'gaussian' or 'uniform'
         corr = None
 
-    # Non-Tensor system model parameters
+    # Matrix system model parameters
     else:
         f = 28e9 # transmission frequency
         Nr = 16
         Nue = 4
         Nrf = 1 # no. of RF chains
-        phase_dev = 15 # +- range of phase deviation under the Uniform distribution
+        phase_dev = 15 # +- range of phase deviation under the Uniform distribution (or equivalent Gaussian distribution)
         dl = 1 # no. of channel multipath
         snr_db = 15 # For no AWGN use the value: None
         B = 5 # B-bit phase shifter in the combiner
-        Q = 16 #16 #51 # no. of measurements
+        Q = 16 # no. of measurements
         snr = 10**(snr_db/10)
+        dist = 'gaussian' # phase deviation distribution: 'gaussian' or 'uniform'
  
 
     print(f"System model parameters:\n no. antenna: {Nr}, no. users: {Nue}, no. RF chains: {Nrf}, no. measurements: {Q}, no. multipath: {dl}, SNR: {snr_db} dB, {B}-bit phase shifter")
@@ -248,8 +250,8 @@ if __name__ == "__main__":
 
     for n in range(args.num_graphs):
  
-        W, Y, H = generate_pilots(Nrf, Nr, Nue, combiner, dl, f, phase_dev, args.tx_flag, dist='gaussian', indices=indices, Nb=Nb, correlation=corr) if args.tensor_flag \
-                  else generate_pilots(Nrf, Nr, Nue, combiner, dl, f, phase_dev, args.tx_flag, dist='gaussian') 
+        W, Y, H = generate_pilots(Nrf, Nr, Nue, combiner, dl, f, phase_dev, args.tx_flag, dist=dist, indices=indices, Nb=Nb, correlation=corr) if args.tensor_flag \
+                  else generate_pilots(Nrf, Nr, Nue, combiner, dl, f, phase_dev, args.tx_flag, dist=dist) 
          
         psn_dev.append(W)
         pilots.append(Y) 

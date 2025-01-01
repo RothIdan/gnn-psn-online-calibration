@@ -159,7 +159,7 @@ def save_testset(path, data_filename, test_data, dataset):
     
     
 class GraphDataset(DGLDataset):
-    def __init__(self, filename, path="/ubc/ece/home/ll/grads/idanroth/Projects/gnn_psn_calib/data/"):
+    def __init__(self, filename, path="<full_path_name>/data/"): # NOTE: need to replace <...> with the full path name of the directory which contain the script
         super().__init__(name=filename, url=None, raw_dir=path)
 
     def process(self):

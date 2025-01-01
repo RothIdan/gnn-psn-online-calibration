@@ -25,8 +25,8 @@ def parse_args():
     parser.add_argument('-dev', '--deviation', type=int, help="Uniform distributed devation in the range +-'dev' degrees, or the corresponded Normal distribution with the dame std", required=True)
     parser.add_argument('-s', '--saving_filename', type=str, help=" file name of the model parameters")
     parser.add_argument('-opt', '--optimizer', type=str, help=" optimizaer type: 'ADAM' or 'SGD' ", default='ADAM')
-    parser.add_argument('-tensor', '--tensor_flag', help="activate for the tensor version of phase shifter network deviations", action="store_true")
-    parser.add_argument('-tx', '--tx_flag', help="activate for the transmitter calibartion system model version", action="store_true")
+    parser.add_argument('-tensor', '--tensor_flag', help="activate flag for the tensor form of phase shifter network deviations", action="store_true")
+    parser.add_argument('-tx', '--tx_flag', help="activate flag for the transmitter calibartion version", action="store_true")
     parser.add_argument('-act', '--activation', type=str, help=" activation function: 'ReLU', 'LeakyReLU' or 'ELU' ", default='LeakyReLU')
     parser.add_argument('-mod', '--mode', type=str, help=" wandb operation mode, use 'disabled' for debugging ", default='online')
     # parser.add_argument('-csi', '--channel', help=" when flag is active, CSI would be used in the GNN ", action='store_true')
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     mlp_layers = 1
     
     
-    dirc = "<full_path_name>" # NOTE: need to replace with the full path name of the directory which contain the script
+    dirc = "<full_path_name>" # NOTE: need to replace <...> with the full path name of the directory which contain the script
     path = os.path.join(dirc + "data/", args.data_filename)
 
     dataset = GraphDataset(args.data_filename, path)

@@ -1,5 +1,7 @@
 # Graph Neural Network-Aided Online Calibration of Phase Shifter Networks
 
+#### The following code was written by Idan Roth as part of the research paper: Roth, I., & Lampe, L. (2025). Graph Neural Network-Aided Online Calibration of Phase Shifter Networks.
+
 <br>
 
 ## Installation
@@ -13,146 +15,116 @@ conda create --name <env> --file requirements.txt
 
 ## Files
 
-### 1. graphs_synthesizer_w_fixed_combiner.py
-Generate a dataset for the non-tensor version estimation.
+### 1. graphs_synthesizer.py
+Generate the dataset in two files: .dgl file which contains the graphs with their features, and .npy file which contains the dictionary of relevant generated data and parameters that were used for the graphs dataset. Outputs also a .txt file with the specific parameters that were used.
 
 Usage:
 ```bash
-python graphs_synthesizer_w_fixed_combiner.py -fn <dataset name> -n <size>
+python graphs_synthesizer.py -fn <str> -n <int>
 ```
 
 Input flags: 
    
-* -fn: dataset name
+* -fn: directory name for saving dataset in (will be saved inside the 'data' directory)
 * -n: number of samples in the dataset (default: 320000)
-* -e: add the CSI to the graph as edge features (default: True)
-* -norm: normalize the dataset features (default: True)
-* -tfeat: use the combiners phases as the antenna node features (default: True)
+* -tensor: flag to activate the tensor version of the phase shifter network deviations
+* -tx: flag to activate the transmitter calibartion version
 
-System parameters:
-* main function:
-    * Nt: no. of antenna
-    * Nue: no. of users
-    * Nrf: no. of RF chains
-    * phase_dev: +- range of phase deviation under uniform distribution
-    * dl: no. of channel multipath
-    * snr_db: SNR value in dB for AWGN. use 'None' for zero noise
-    * N: no. of measuremetns (note that in this version each pilot is a single symbol)
+
+main function:
+* Need to set the desired system parameters inside the main function for the matrix form or the tensor form of the system model.
+* Inputs:
+    * Nr: number of antennas
+    * Nue: number of users
+    * Nrf: number of RF chains
+    * phase_dev: +- range of phase deviation under uniform distribution (or for the equivalent Gaussian distribution s.t.d.)
+    * dl: number of channel clusters
+    * snr_db: SNR value in dB for AWGN
     * B: B-bit phase shifter in the combiner
+    * Q: number of training combiners (measuremetns) for the matrix form
+    * O: number of phase states appearances for the tensor form
 
-* generate_pilots function:
-    * f: transmission frequency
-    * wvlen: wave length (= 3e8/f)
-    * d: array elements spacing (= wvlen/2) 
+    Note: need to replace '<...>' in varaible 'path' with the full path name of the directory which contain this script
+   
 
 Outputs:
 
-save the following files in a folder named "-fn" under 'data' folder:
+Save the following files in a directory named "-fn" under "data" directory:
 
 * .dgl file which hold the graph samples with their features.
-* .npy file which holds the data dictionery with the following keys: "psn_dev", "pilots", "channel", "combiner", "num_rfchain" (no. of rf chains in the system), "num_meas" (no. of pilots measurements used in each sample), "num_states" (no. of phase states in each phase shifter). 
-* .txt file which presents the parameters used for the dataset creation.
+* .npy file which holds the data dictionery with the following keys: "psn_dev", "pilots", "channel", "combiner", "num_rfchain", "num_antenna", "num_meas", "num_states, "num_user. 
+* .txt file which presents the system parameters used for the dataset creation.
 
-### 2. tensor_graphs_synthesizer.py
-Generate a dataset for the tensor version estimation.
+
+### 2. train.py
+Train a choosen GNN model type based on the given dataset, save the model in 'models' directory, and print out the RMSE test result over the testset (which is also being saved in the dataset folder). 
 
 Usage:
 ```bash
-python tensor_graphs_synthesizer.py -fn <dataset name> -n <size>
+python train.py -fn <str> -loss <str> -dev <int>
 ```
 
 Input flags: 
    
-* -fn: dataset name
-* -n: number of samples in the dataset (default: 320000)
-* -e: add the CSI to the graph as edge features (default: True)
-* -norm: normalize the dataset features (default: True)
-* -tfeat: use the combiners phases as the antenna node features (default: True)
-
-System parameters:
-* main function:
-    * Nt: no. of antenna
-    * Nue: no. of users
-    * Nrf: no. of RF chains
-    * phase_dev: +- range of phase deviation under uniform distribution
-    * dl: no. of channel multipath
-    * snr_db: SNR value in dB for AWGN. use 'None' for zero noise
-    * N: pilot vector length
-    * B: B-bit phase shifter in the combiner
-    * O: no. of occurences for each phase state in every phase shifter
-    * Nb: no. possible phase states (= 2**B)
-    * Q: no. of measurements (= O*Nb)
-
-* generate_pilots function:
-    * f: transmission frequency
-    * wvlen: wave length (= 3e8/f)
-    * d: array elements spacing (= wvlen/2) 
-
-Outputs:
-
-save the following files in a folder named "-fn" under 'data' folder:
-
-* .dgl file which hold the graph samples with their features.
-* .npy file which holds the data dictionery with the following keys: "psn_dev", "pilots", "channel", "combiner", "num_rfchain" (no. of rf chains in the system), "num_meas" (no. of pilots measurements used in each sample), "num_states" (no. of phase states in each phase shifter). 
-* .txt file which presents the parameters used for the dataset creation.
-
-### 3. train.py
-Train a choosen GNN model type based on the given dataset, save the model under 'models ' file, and print out the RMSE test result over the testset (which is also being saved in the dataset folder). 
-
-Usage:
-```bash
-python train.py -fn <dataset name> -csi <bool> -t <bool>
-```
-
-Input flags: 
-   
-* -fn: dataset name
-* -s: if want to specify a name for saving the model
+* -fn: dataset directory name
+* -loss: loss function error mode: "offset", "affine" or "absolute" (further details are in the paper)
+* -dev: phase devation within the range +-'dev' in degrees that were used for dataset generation
+* -s: file name if want to specify it for saving the model
 * -opt: optimizaer type: 'ADAM' or 'SGD' (default='ADAM')
 * -act: activation function: 'ReLU', 'LeakyReLU' or 'ELU' (default='ReLU')
 * -mod: wandb operation mode, use 'disabled' for debugging (default='online')
-* -csi: if True, CSI would be used in the GNN (default=False)
-* -t: if True, the tensor version GNN of the PSN estimation would be used (default=True)
+* -tensor: flag to activate the tensor version of the phase shifter network deviations
+* -tx: flag to activate the transmitter calibartion version
 
-Parameters:
 
-* num_epochs: no. of epochs to train the model
-* batch_size: minibatch size for the dataset iterator
-* learning_rate: learning rate of the optimizaer
-* betas: values for ADAM optimizer
-* weight_decay: L2 penalty coefficient
-* dropout: dropout probability for the MLP used in the GNN
-* d_h: MLP hidden dimension for the nodes hidden representation
-* n_layer: no. of layers used in the MLPs of the GNN
+main function:
+* Need to set the desired hyperparameters for GNN training:
+    * num_epochs: number of epochs to train the model
+    * batch_size: minibatch size for the dataset iterator
+    * learning_rate: learning rate of the optimizaer
+    * betas: values for ADAM optimizer
+    * weight_decay: L2 penalty coefficient
+    * dropout: dropout probability for the MLP used in the GNN
+    * d_h: MLP hidden layer dimension for the nodes hidden representation
+    * conv_layers: number of graph convolutional layers in the MPNN module
+    * mlp_layers: number of layers used in the MLPs of the GNN
+
+    Note: need to replace '<...>' in varaible 'dirc' with the full path name of the directory which contain this script
+    
+
+### 3. test.py
+Test a choosen GNN model type based on the given dataset and model name, and print out the RMSE test result over the testset. 
+
+Usage:
+```bash
+python test.py -fn <str> -loss <str> -dev <int> -model <str>
+```
+
+Input flags: 
+   
+* -fn: dataset directory name
+* -loss: loss function error mode: "offset", "affine" or "absolute" (further details are in the paper)
+* -dev: phase devation within the range +-'dev' in degrees that were used for dataset generation
+* -model: GNN model .pth file full name 
+
+Note: need to replace '<...>' in varaible 'dirc' with the full path name of the directory which contain this script
+
 
 ### 4. models.py
-File which contains four Pytorch models and the classes that form them:
+File that contain the GNN Pytorch-based DGL model 'GraphNeuralNetwork' and the classes that form it.
+Moreover, the file contains training loop functions (+ validation) and testing loop functions, which are used by 'train.py' and 'test.py'.
 
-* GraphNeuralNetworkConcat2 - the baseline GNN which does not uses CSI as part of training. It is constructed using an intilaization layer, graph convolution layers, and a normalization layer.
-* SkipConGnn - same as the baseline GNN but uses for training skip connections from each GCN layer output.
-* GraphNeuralNetworkCSIConcat -  GCN which concatenates the CSI features to the recieved pilots for the UE nodes hidden representation in the intialization layer (1st version of CSI GCN).
-* EdgeGraphNeuralNetwork - GCN which uses CSI as features on edges in the aggregation stage (2nd version of CSI GCN).
-
-Moreover, the file contains training loop functions (+ validation) and testing loop functions, which are used by 'train.py' to train both GNN veresions (non-tensor and tensor).
 
 ### 5. utils.py
-File which contains utilities functions such as Pytorch dataset objects, save function, RMSE loss function, etc.
+File which contains utilities functions such as DGL graph dataset object, saving functions, and loss function for MSE evaluation.
+
+Note: need to replace '<...>' in the the init function input 'path' under class 'GraphDataset'. Use the full path name of the directory which contain this script
 
 
-## Usage
-
-1. Create a dataset by running the tensor or non-tensor graph sythesizer option, after specifying the system parameters in the code. Run e.g.:
-```bash
-python tensor_graphs_synthesizer.py -fn 'tensor_graph_fixed_2feat_20db_03Jan24'
 ```
-2. Train the model after specifying the hyperparameters in the code. Adjust the flags used in the command for the appropriate data type (tensor or non-tensor) and GNN option (w/ CSI or w/o CSI), test result would be printed on terminal. Run e.g.:
-
-```bash
-python train.py -fn 'tensor_graph_fixed_2feat_20db_03Jan24' -csi True
+Remark 1: The main directory should include the mentioned files, and two extra directories named: 'data' and 'models'. 
+```
+```
+Remark 2: wandb package is optional, and was used for visualizing the training phase. 
 ```
 
-    Note: wandb is used in code for training vizualization by logging results to their servers.
-
-
-
-#### Code was written by Idan Roth, idanroth@ece.ubc.ca, under the supervision of Prof. Lutz Lampe from the ECE department at UBC.
