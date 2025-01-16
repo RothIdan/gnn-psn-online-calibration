@@ -1,19 +1,35 @@
 # Graph Neural Network-Aided Online Calibration of Phase Shifter Networks
 
-#### The following code was written by Idan Roth as part of the research paper: Roth, I., & Lampe, L. (2025). Graph Neural Network-Aided Online Calibration of Phase Shifter Networks.
+## Introduction
+
+This repository contains the implementation code used in the research described in the journal paper:
+
+"Roth, I., & Lampe, L. (2025). Graph Neural Network-Aided Online Calibration of Phase Shifter Networks."
+
+The code provided herein is intended to facilitate the replication of results and further research in the area of graph neural networks for online calibration of phase shifter networks. It was used for simulations that are demonstrated and discussed in our paper, which is currently under review.
+
+**Author**: This code was written by Idan Roth to support the research presented in the paper.
+
+**Prerequisites**: For details on the software environment and libraries required to run the simulations, please refer to the **Requirements and Installation** section and the `requirements.txt` file included in this repository.
+
+For any further questions or collaboration inquiries, please contact: idanroth@ece.ubc.ca.
 
 <br>
 
-## Installation
+## Requirements and Installation
 
-Type the following command in the command line to create an Anaconda environement with the required Python libraries:
+Run the following command to create an Anaconda environement with the required Python packages:
 
 ```bash
-conda create --name <env> --file requirements.txt
+conda create --name <str> --file requirements.txt
+```
+or
+```bash
+conda env create -f environment.yml
 ```
 
 
-## Files
+## Detailed Code Overview and Usage
 
 ### 1. graphs_synthesizer.py
 Generate the dataset in two files: .dgl file which contains the graphs with their features, and .npy file which contains the dictionary of relevant generated data and parameters that were used for the graphs dataset. Outputs also a .txt file with the specific parameters that were used.
