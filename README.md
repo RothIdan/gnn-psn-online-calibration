@@ -77,13 +77,12 @@ Train a choosen GNN model type based on the given dataset, save the model in 'mo
 
 Usage:
 ```bash
-python train.py -fn <str> -loss <str> -dev <int>
+python train.py -fn <str> -dev <int>
 ```
 
 Input flags: 
    
 * -fn: dataset directory name
-* -loss: loss function error mode: "offset", "affine" or "absolute" (further details are in the paper)
 * -dev: phase devation within the range +-'dev' in degrees that were used for dataset generation
 * -s: file name if want to specify it for saving the model
 * -opt: optimizaer type: 'ADAM' or 'SGD' (default='ADAM')
@@ -113,13 +112,12 @@ Test a choosen GNN model type based on the given dataset and model name, and pri
 
 Usage:
 ```bash
-python test.py -fn <str> -loss <str> -dev <int> -model <str>
+python test.py -fn <str>  -dev <int> -model <str>
 ```
 
 Input flags: 
    
 * -fn: dataset directory name
-* -loss: loss function error mode: "offset", "affine" or "absolute" (further details are in the paper)
 * -dev: phase devation within the range +-'dev' in degrees that were used for dataset generation
 * -model: GNN model .pth file full name 
 
@@ -132,7 +130,7 @@ Moreover, the file contains training loop functions (+ validation) and testing l
 
 
 ### 5. utils.py
-File which contains utilities functions such as DGL graph dataset object, saving functions, and loss function for MSE evaluation.
+File which contains utilities functions such as DGL graph dataset object and saving functions.
 
 Note: need to replace '<...>' in the the init function input 'path' under class 'GraphDataset'. Use the full path name of the directory which contain this script
 
