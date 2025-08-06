@@ -12,99 +12,12 @@ from functools import partial
 
 
 
-class LossFn:
-    """
-    Loss function class.
-    Calculate the error between the estimated deviation and the ground truth.
-        We allow for error calculation when considering two phase ambiguities: 
-            1. None, error in absolute - omega_hat_i = omega_i + err.
-            2. global phase offset (delay) beta - omega_hat_i = omega_i + beta + err.
-            3. global phase offset (delay) beta and phase slope alpha  - omega_hat_i = omega_i + alpha*i + beta + err (additive affine curve).
-        Parameters:
-            error_mode (str) - 'none' for 1, 'offset' for 2, 'affine' for 3.
-            size (int) - number of phase shifters.
-            p_states (int) - number of phase states at each phase shifter Nb
-    """
-
-    def __init__(self, error_mode, size, device, p_states=None):
-        if error_mode not in ["absolute","offset","affine"]:
-            raise KeyError(f'Error type {error_mode} not supported.\n'
-                            'Use "absolute", "offset", or "affine" only') 
-        
-        self.mode = error_mode
-        self.size = size
-        self.modeified_pred = None
-        self.device = device
-        self.p_states = p_states
-
-        if p_states is None: # "Matrix" form
-            if error_mode == 'affine':
-                X = torch.concatenate((torch.ones((size,1)),torch.arange(size).reshape(size,1)), dim=1)
-                self.lhs_mat = (torch.inverse(X.T @ X) @ X.T).to(device)
-            elif error_mode == 'offset':
-                X = torch.ones((size,1))
-                self.lhs_mat = (torch.inverse(X.T @ X) @ X.T).to(device)
-        
-        else: # "Tensor" form
-            if error_mode == 'affine':
-                X = torch.concatenate((torch.ones((size,1)),torch.arange(size).reshape(size,1)), dim=1)
-                X = X.repeat((p_states,1))
-                self.lhs_mat = (torch.inverse(X.T @ X) @ X.T).to(device)
-            elif error_mode == 'offset':
-                X = torch.ones((size,1))
-                X = X.repeat((p_states,1))
-                self.lhs_mat = (torch.inverse(X.T @ X) @ X.T).to(device)
-
-        
-        self.loss_fn = self._get_loss_fn(error_mode)
-    
-    
-    def loss(self, pred, psn_dev):
-        y = (pred - psn_dev).T # NOTE: make sure the order is 1st phase state for all antenna elements, 2nd phase states for all antenna elements,...
-                               # pred = [w_1^1, w_2^1,..., w_Nr^1, w_1^2,..., w_Nr^2,..., w_1^Nb,..., w_Nr^Nb]^T
-
-        return self.loss_fn(y, pred, psn_dev)
-    
-    
-    def get_modified_pred(self):
-        return self.modeified_pred
-
-
-    def _get_loss_fn(self, mode):
-        if mode == 'affine':
-            return self._affine_loss
-        elif mode == 'offset':
-            return self._offset_loss
-        else: # mode == 'absolute'
-            return self._absolute_loss
-            
-
-    def _affine_loss(self, y, pred, psn_dev):
-        p = self.lhs_mat @ y
-        beta_hat, alpha_hat = p.T[:,0:1], p.T[:,1:2]
-        # Eliminate ambiguity
-        r = torch.arange(self.size, device=self.device)
-        if self.p_states is not None: # "Tensor" form
-            r = r.repeat(self.p_states)
-        pred = pred - alpha_hat*r - beta_hat # shape: batch_size X size 
-
-        self.modeified_pred = pred    
-
-        return nn.MSELoss()(pred, psn_dev)
-
-    def _offset_loss(self, y, pred, psn_dev):
-        beta_hat = (self.lhs_mat @ y).T # Gives the average of y
-        # Eliminate ambiguity
-        pred = pred - beta_hat # shape: batch_size X size
-
-        self.modeified_pred = pred    
-        
-        return nn.MSELoss()(pred, psn_dev)
-    
-    def _absolute_loss(self, y, pred, psn_dev):   
-        self.modeified_pred = pred 
-        
-        return nn.MSELoss()(pred, psn_dev)
+def seed_torch(seed=0):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 
 

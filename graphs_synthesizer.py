@@ -67,13 +67,27 @@ def generate_pilots(Nrf, Nr, Nue, P, dl, f, dev, tx_flag=False, dist="uniform", 
 
         # Gain
         G = np.zeros((Nue*dl, Nue), dtype=np.complex64)
-        for n in range(Nue):
-            re = np.random.normal(0, np.sqrt(1/2), dl)
-            im = np.random.normal(0, np.sqrt(1/2), dl)
-            g = re + 1j*im
+        if dl == 1: # LOS
+            for n in range(Nue):
+                k = 2
+                phase = np.deg2rad(np.random.uniform(-180,180,size=(dl)))
+                g_los  = np.exp(1j * phase, dtype=np.complex128)
 
-            # g = np.exp(1j * np.random.uniform(-180,180, size=(dl))) #####################  Unit modolus with random phase  #####################
-            G[n*dl:n*dl+dl, n] = g
+                re = np.random.normal(0, np.sqrt(1/2), dl)
+                im = np.random.normal(0, np.sqrt(1/2), dl)
+                g_nlos = re + 1j*im
+
+                g = np.sqrt(k/(k+1))*g_los + np.sqrt(1/(k+1))*g_nlos
+
+                G[n*dl:n*dl+dl, n] = g
+
+        else: # NLOS
+            for n in range(Nue):
+                re = np.random.normal(0, np.sqrt(1/2), dl)
+                im = np.random.normal(0, np.sqrt(1/2), dl)
+                g = re + 1j*im
+
+                G[n*dl:n*dl+dl, n] = g
 
 
         H = np.matmul(A, G) # dtype = complex64, shape: Nr X Nue
@@ -132,12 +146,28 @@ def generate_pilots(Nrf, Nr, Nue, P, dl, f, dev, tx_flag=False, dist="uniform", 
         A = np.exp(-1j * (np.transpose(a) * np.sin(np.deg2rad(doa.reshape(-1)))), dtype=np.complex64)
         # Gain 
         G = np.zeros((Nue*dl, Nue), dtype=np.complex64)
-        for n in range(Nue):
-            re = np.random.normal(0, np.sqrt(1/2), dl)
-            im = np.random.normal(0, np.sqrt(1/2), dl)
-            g = re + 1j*im
-            # g = np.exp(1j * np.deg2rad(np.random.uniform(-180,180,size=(dl))), dtype=np.complex64) # unit-modulus with random phase fading gain
-            G[n*dl:n*dl+dl, n] = g
+        if dl == 1: # LOS
+            for n in range(Nue):
+                k = 2
+                phase = np.deg2rad(np.random.uniform(-180,180,size=(dl)))
+                g_los  = np.exp(1j * phase, dtype=np.complex128)
+
+                re = np.random.normal(0, np.sqrt(1/2), dl)
+                im = np.random.normal(0, np.sqrt(1/2), dl)
+                g_nlos = re + 1j*im
+
+                g = np.sqrt(k/(k+1))*g_los + np.sqrt(1/(k+1))*g_nlos
+
+                G[n*dl:n*dl+dl, n] = g
+
+        else: # NLOS
+            for n in range(Nue):
+                re = np.random.normal(0, np.sqrt(1/2), dl)
+                im = np.random.normal(0, np.sqrt(1/2), dl)
+                g = re + 1j*im
+            # g *= np.random.uniform(0.6,1)
+            # g = np.exp(1j * np.random.uniform(-np.pi,np.pi, size=(dl))) #####################  Unit modolus with random phase  #####################
+                G[n*dl:n*dl+dl, n] = g
 
         H = np.matmul(A, G) # dtype = complex64, shape: Nr X Nue
         Y = []
@@ -189,9 +219,9 @@ if __name__ == "__main__":
         Nr = 16
         Nue = 4
         Nrf = 1 # no. of RF chains
-        phase_dev = 15 # +- range of phase deviation under the Uniform distribution (or equivalent Gaussian distribution)
+        phase_dev = 10 # +- range of phase deviation under the Uniform distribution (or equivalent Gaussian distribution)
         dl = 1 # no. of channel multipath
-        snr_db = 15 # For no AWGN use the value: None
+        snr_db = 5 # For no AWGN use the value: None
         B = 5 # B-bit phase shifter in the combiner
         Q = 16 # no. of measurements
         snr = 10**(snr_db/10)
@@ -266,17 +296,17 @@ if __name__ == "__main__":
     combiner = np.array(combiner).reshape(Q*Nrf, -1) if not args.tx_flag else np.array(combiner).conj().reshape(Q*Nrf, -1) # Stacking combiner matrices vertically, Shape: Q X Nrf X Nr --> Q*Nrf X Nr
 
     # Additive noise for Rx or Tx calibration
-    if not args.tensor_flag:
-        if snr_db is not None:
-            power = np.linalg.norm(pilots, axis=(1,2), ord='fro')**2
-            num_elem = Q*Nue if args.tx_flag else Q*Nrf*Nue
-            sigma2_z = power.mean() / (snr*num_elem)
+    # if not args.tensor_flag:
+    if snr_db is not None:
+        power = np.linalg.norm(pilots, axis=(1,2), ord='fro')**2
+        num_elem = Q*Nue if args.tx_flag else Q*Nrf*Nue
+        sigma2_z = power.mean() / (snr*num_elem)
 
-            size = (args.num_graphs, Q, Nue) if args.tx_flag else (args.num_graphs, Q*Nrf, Nue)
-            re_z = np.random.normal(0, np.sqrt(sigma2_z/2), size).astype(np.float32)
-            im_z = np.random.normal(0, np.sqrt(sigma2_z/2), size).astype(np.float32)
-            Z = re_z + 1j*im_z
-            pilots += Z
+        size = (args.num_graphs, Q, Nue) if args.tx_flag else (args.num_graphs, Q*Nrf, Nue)
+        re_z = np.random.normal(0, np.sqrt(sigma2_z/2), size).astype(np.float32)
+        im_z = np.random.normal(0, np.sqrt(sigma2_z/2), size).astype(np.float32)
+        Z = re_z + 1j*im_z
+        pilots += Z
 
         
     

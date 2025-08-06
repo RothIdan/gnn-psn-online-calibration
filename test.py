@@ -9,7 +9,7 @@ from dgl.dataloading import GraphDataLoader
 import argparse
 from datetime import datetime
 
-from utils import GraphDataset, LossFn
+from utils import GraphDataset, seed_torch
 from models import GraphNeuralNetwork, test
 
 
@@ -18,7 +18,6 @@ from models import GraphNeuralNetwork, test
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-fn', '--data_filename', type=str, help=" file name of data for both .dgl and .npy, e.g., 'graph1'", required=True)
-    parser.add_argument('-loss', '--loss_mode', type=str, choices=['absolute', 'offset', 'affine'] , help="loss function error mode", required=True)
     parser.add_argument('-dev', '--deviation', type=int, help="Uniform distributed devation in the range +-'dev' degrees, or the corresponded Normal distribution with the dame std", required=True)
     parser.add_argument('-model', '--model_name', type=str, help="name of the model parameters")
 
@@ -28,8 +27,7 @@ def parse_args():
 
 if __name__ == "__main__":
     # torch.autograd.set_detect_anomaly(True)
-    torch.manual_seed(2)
-    np.random.seed(2)
+    seed_torch(2)
 
     args = parse_args() # getting all the init args from input
 
@@ -73,9 +71,8 @@ if __name__ == "__main__":
     model_test = GraphNeuralNetwork(d_in, d_h, d_out, conv_layer, mlp_layer, activation_fn=nn.LeakyReLU(0.1), dropout=dropout, aggr_fn='mean', dev=args.deviation).to(device)
     model_test.load_state_dict(model_dict['model_state_dict'])
 
-    loss_fn = LossFn(args.loss_mode, test_data.Nr, device, test_data.Nb)
 
-    test(test_dataloader, model_test, loss_fn, device)
+    test(test_dataloader, model_test, device)
 
     print("Done!")
  

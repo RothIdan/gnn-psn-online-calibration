@@ -245,6 +245,7 @@ class ReadoutFunction(nn.Module):
      
         self.sigmoid = nn.Sigmoid()
         self.sigma = np.deg2rad(dev)/(3**0.5) # Uniform dist [-dev,dev] std for the PSN deviation Gaussian distribution
+        self.dev = dev
 
 
     def forward(self, feat, batch_size):
@@ -259,6 +260,7 @@ class ReadoutFunction(nn.Module):
 
         # phase estimation
         out = self.sigmoid(feat) * 2*3*self.sigma - 3*self.sigma # 99.7% of the values are whithin +-3sigma
+        # out = self.sigmoid(feat) * 2*self.dev - self.dev # for uniform dist. deviation
 
         return out
 
@@ -292,7 +294,7 @@ class MLP(nn.Module):
 
 ################ Training and testing loops ################### 
 
-def train(dataloader, validloader, model, optimizer, loss_fn, device, num_epochs, config, filename, mode):
+def train(dataloader, validloader, model, optimizer, device, num_epochs, config, filename, mode):
     wandb.init(name=filename, project="gnn_psn_calib", config=config, mode=mode)
     wandb.watch(model)
     best_loss = np.inf
@@ -320,7 +322,7 @@ def train(dataloader, validloader, model, optimizer, loss_fn, device, num_epochs
             w = torch.transpose(pred, dim0=2, dim1=1)
             w = w.reshape(batch_size, -1)
 
-            loss = loss_fn.loss(w, psn_dev)
+            loss = nn.MSELoss()(w, psn_dev)
             cumu_loss += loss.item()
 
             # Backpropagation
@@ -347,8 +349,12 @@ def train(dataloader, validloader, model, optimizer, loss_fn, device, num_epochs
                     pred = pred.reshape(batch_size, -1)
 
                     psn_dev = psn_dev.angle().view(batch_size, -1) if Nb is None else torch.transpose(psn_dev.angle(),dim0=3,dim1=2).reshape(batch_size, -1)
+
+                    # removing corresponding average from each vector for evaluation purposes
+                    pred -= pred.mean(dim=1, keepdim=True)
+                    psn_dev -= psn_dev.mean(dim=1, keepdim=True) 
     
-                    valid_loss += loss_fn.loss(pred, psn_dev).item() 
+                    valid_loss += nn.MSELoss()(pred, psn_dev).item()
             
             valid_loss /= num_batches
             model.train()
@@ -376,7 +382,7 @@ def train(dataloader, validloader, model, optimizer, loss_fn, device, num_epochs
 
 
 
-def test(dataloader, model, loss_fn, device):
+def test(dataloader, model, device):
     size = len(dataloader.dataset) 
     num_batches = len(dataloader)
     batch_size = dataloader.batch_size
@@ -396,9 +402,11 @@ def test(dataloader, model, loss_fn, device):
             pred = pred.reshape(batch_size, -1)
             psn_dev = psn_dev.angle().view(batch_size, -1)
 
-            test_loss += loss_fn.loss(pred, psn_dev).item()
-           
-            pred = loss_fn.get_modified_pred()
+            # removing corresponding average from each vector for evaluation purposes
+            pred -= pred.mean(dim=1, keepdim=True)
+            psn_dev -= psn_dev.mean(dim=1, keepdim=True) 
+
+            test_loss += nn.MSELoss()(pred, psn_dev).item()
 
             rmse += torch.mean((pred-psn_dev)**2, dim=1).sum()
             mse += torch.sum((pred-psn_dev)**2, dim=1).sum()

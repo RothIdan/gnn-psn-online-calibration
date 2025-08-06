@@ -10,7 +10,7 @@ from dgl.dataloading import GraphDataLoader
 import argparse
 from datetime import datetime
 
-from utils import GraphDataset, LossFn, save_testset
+from utils import GraphDataset, save_testset, seed_torch
 from models import GraphNeuralNetwork, train, test
 
 
@@ -21,7 +21,6 @@ from models import GraphNeuralNetwork, train, test
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-fn', '--data_filename', type=str, help=" file name of data for both .dgl and .npy, e.g., 'graph1'", required=True)
-    parser.add_argument('-loss', '--loss_mode', type=str, choices=['absolute', 'offset', 'affine'] , help="loss function error mode", required=True)
     parser.add_argument('-dev', '--deviation', type=int, help="Uniform distributed devation in the range +-'dev' degrees, or the corresponded Normal distribution with the dame std", required=True)
     parser.add_argument('-s', '--saving_filename', type=str, help=" file name of the model parameters")
     parser.add_argument('-opt', '--optimizer', type=str, help=" optimizaer type: 'ADAM' or 'SGD' ", default='ADAM')
@@ -38,8 +37,7 @@ def parse_args():
 
 if __name__ == "__main__":
     # torch.autograd.set_detect_anomaly(True)
-    torch.manual_seed(2)
-    np.random.seed(2)
+    seed_torch(2)
 
     args = parse_args() # getting all the init args from input
 
@@ -49,12 +47,12 @@ if __name__ == "__main__":
     
     # hyper-parameters
     num_epochs = 200 
-    batch_size =  1024 
-    learning_rate = 0.0005
+    batch_size =  512 
+    learning_rate = 0.001
     betas = (0.9, 0.999)
     weight_decay = 1e-6
-    dropout = 0.3323
-    d_h = 1181
+    dropout = 0.039
+    d_h = 1156
     conv_layers = 2
     mlp_layers = 1
     
@@ -90,7 +88,6 @@ if __name__ == "__main__":
     elif args.activation == 'ELU':
         activation_fn = nn.ELU(0.1)
     
-    loss_fn = LossFn(args.loss_mode, dataset.Nr, device, dataset.Nb)
         
         
     model = GraphNeuralNetwork(d_in, d_h, d_out, conv_layers, mlp_layers, activation_fn=activation_fn, dropout=dropout, aggr_fn='mean', dev=args.deviation).to(device)
@@ -118,15 +115,15 @@ if __name__ == "__main__":
     
 
     config = {"graph": args.data_filename, "epochs": num_epochs, "h_dim": d_h, "conv_layer":conv_layers, "mlp_layer": mlp_layers, "batch_size": batch_size, "lr": learning_rate, "num_states": dataset.Nb,
-              "weight_decay": weight_decay, "dropout": dropout, "optim": args.optimizer, "num_rfchain": dataset.Nrf, "num_meas": dataset.Q, 'act': args.activation, 'dev':args.deviation, 'error':args.loss_mode} # for W&B 
+              "weight_decay": weight_decay, "dropout": dropout, "optim": args.optimizer, "num_rfchain": dataset.Nrf, "num_meas": dataset.Q, 'act': args.activation, 'dev':args.deviation} # for W&B 
     if not args.saving_filename: 
-        saving_filename = f"{config['graph']}_{datetime.now().strftime('%d-%m-%Y-@-%H:%M')}_{config['error']}_{config['optim']}_conv-layer_{conv_layers}_mlp-layer_" \
+        saving_filename = f"{config['graph']}_{datetime.now().strftime('%d-%m-%Y-@-%H:%M')}_{config['optim']}_conv-layer_{conv_layers}_mlp-layer_" \
                         + f"{mlp_layers}_lr_{learning_rate}_dh_{d_h}_batch_{batch_size}_act_{config['act']}_do_{config['dropout']}_wd_{config['weight_decay']}.pth"
     else:
         saving_filename = args.saving_filename  
 
 
-    train(train_dataloader, validation_dataloader, model, optimizer, loss_fn, device, num_epochs, config, saving_filename, args.mode)
+    train(train_dataloader, validation_dataloader, model, optimizer, device, num_epochs, config, saving_filename, args.mode)
     
     # Test phase
     test_dataloader = GraphDataLoader(test_data, batch_size=batch_size, shuffle=False, drop_last=True)
@@ -136,7 +133,7 @@ if __name__ == "__main__":
     path = os.path.join(dirc + "models/", saving_filename)
     model_test.load_state_dict(torch.load(path)['model_state_dict'])
     
-    test(test_dataloader, model_test, loss_fn, device)
+    test(test_dataloader, model_test, device)
     
     print("Done!")
  
