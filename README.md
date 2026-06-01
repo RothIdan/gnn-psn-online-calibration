@@ -3,8 +3,7 @@
 ## Introduction
 
 This repository contains the implementation code used in the research described in the journal paper:
-
-"Roth, I., & Lampe, L. (2025). Graph Neural Network-Aided Online Calibration of Phase Shifter Networks."
+I. Roth and L. Lampe, “Graph neural network-aided online calibration of phase shifter networks,” IEEE Trans. Mach. Learn. Commun. Netw., vol. 4, pp. 629–646, 2026.
 
 The code provided herein is intended to facilitate the replication of results and further research in the area of graph neural networks for online calibration of phase shifter networks. It was used for simulations that are demonstrated and discussed in our paper, which is currently under review.
 
