@@ -7,9 +7,22 @@ I. Roth and L. Lampe, “Graph neural network-aided online calibration of phase 
 
 The code provided herein is intended to facilitate the replication of results and further research in the area of graph neural networks for online calibration of phase shifter networks. It was used for simulations that are demonstrated and discussed in our paper, which is currently under review.
 
-**Author**: This code was written by Idan Roth to support the research presented in the paper.
+**Author**: This code was written by Idan Roth.
 
-**Prerequisites**: For details on the software environment and libraries required to run the simulations, please refer to the **Requirements and Installation** section and the `requirements.txt` file included in this repository.
+**Citation**: If you use this code in your research, please cite our paper:
+
+```bibtex
+@article{roth2026graph,
+  title={Graph neural network-aided online calibration of phase shifter networks},
+  author={Roth, Idan and Lampe, Lutz},
+  journal={IEEE Transactions on Machine Learning in Communications and Networking},
+  volume={4},
+  pages={629--646},
+  year={2026},
+  publisher={IEEE}
+}
+```
+**Prerequisites**: For details on the software environment and libraries required to run the simulations, please refer to the 'Requirements and Installation' section and the `requirements.txt` file included in this repository.
 
 For any further questions or collaboration inquiries, please contact: idanroth@ece.ubc.ca.
 
